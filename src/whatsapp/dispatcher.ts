@@ -1,0 +1,510 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
+import type { WASocket } from "@whiskeysockets/baileys";
+import { env } from "../config/env.js";
+import {
+  customerRepository,
+  auditLogRepository,
+  messageQueueRepository,
+  CustomerRepository,
+  AuditLogRepository,
+  MessageQueueRepository,
+  type Customer,
+  type QueueJob,
+} from "../database/repositories.js";
+import type {
+  DispatchOptions,
+  DispatchResult,
+  JidResolutionResult,
+} from "./types.js";
+
+/**
+ * Utilitario de espera assincrona (sleep)
+ */
+export function sleep(ms: number): Promise<void> {
+  if (ms <= 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Retorna atraso pseudo-aleatorio inteiro entre minMs e maxMs inclusivos
+ */
+export function getRandomDelay(minMs: number, maxMs: number): number {
+  const min = Math.min(minMs, maxMs);
+  const max = Math.max(minMs, maxMs);
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+/**
+ * Gera candidatos de telefones brasileiros normalizando o 9º digito movel
+ * Formato internacional Brasil: 55 + DDD (2 digitos) + 8 ou 9 digitos
+ */
+export function resolveBrazilianPhoneCandidates(rawPhone: string): {
+  readonly canonicalPhone: string;
+  readonly candidates: string[];
+} {
+  const isExplicitInternational = rawPhone.trim().startsWith("+") && !rawPhone.trim().startsWith("+55");
+  const digits = rawPhone.replace(/\D/g, "");
+
+  // Se nao for internacional e nao tiver DDI 55 mas tiver 10 ou 11 digitos nacionais, prefixa 55
+  let fullDigits = digits;
+  if (!isExplicitInternational && !fullDigits.startsWith("55") && (fullDigits.length === 10 || fullDigits.length === 11)) {
+    fullDigits = `55${fullDigits}`;
+  }
+
+  // Verifica se e um numero brasileiro valido (DDI 55 + DDD 2 digitos)
+  if (!isExplicitInternational && fullDigits.startsWith("55") && (fullDigits.length === 12 || fullDigits.length === 13)) {
+    const ddd = fullDigits.slice(2, 4);
+    const subscriber = fullDigits.slice(4);
+
+    if (fullDigits.length === 13) {
+      // 13 digitos: 55 + DDD + 9 + 8 digitos
+      const candidateWith9 = fullDigits;
+      const candidateWithout9 = `55${ddd}${subscriber.slice(1)}`;
+      return {
+        canonicalPhone: fullDigits,
+        candidates: [candidateWith9, candidateWithout9],
+      };
+    } else {
+      // 12 digitos: 55 + DDD + 8 digitos
+      const candidateWithout9 = fullDigits;
+      const candidateWith9 = `55${ddd}9${subscriber}`;
+      return {
+        canonicalPhone: candidateWith9,
+        candidates: [candidateWith9, candidateWithout9],
+      };
+    }
+  }
+
+  // Numeros internacionais ou outros formatos
+  return {
+    canonicalPhone: digits,
+    candidates: [digits],
+  };
+}
+
+export interface ResolveJidOptions {
+  readonly forceRefresh?: boolean;
+  readonly updateDatabase?: boolean;
+  readonly customerRepo?: CustomerRepository;
+  readonly auditRepo?: AuditLogRepository;
+}
+
+/**
+ * JID Resolver com normalizacao do 9º digito brasileiro e persistencia em SQLite
+ */
+export async function resolveJid(
+  phoneOrCustomer: string | Customer,
+  sock: WASocket,
+  options: ResolveJidOptions = {}
+): Promise<JidResolutionResult> {
+  const custRepo = options.customerRepo ?? customerRepository;
+  const auditRepo = options.auditRepo ?? auditLogRepository;
+
+  let targetPhone = "";
+  let existingCustomer: Customer | null = null;
+
+  if (typeof phoneOrCustomer === "string") {
+    const trimmed = phoneOrCustomer.trim();
+    // Se ja for um JID completo do WhatsApp, retorna diretamente
+    if (trimmed.includes("@s.whatsapp.net") || trimmed.includes("@g.us")) {
+      const purePhone = trimmed.replace(/@.*$/, "").replace(/\D/g, "");
+      return {
+        phone: purePhone,
+        jid: trimmed,
+        exists: true,
+        fromCache: true,
+        testedCandidates: [purePhone],
+      };
+    }
+    targetPhone = trimmed;
+    existingCustomer = custRepo.findByPhone(targetPhone) || custRepo.findById(targetPhone);
+  } else {
+    existingCustomer = phoneOrCustomer;
+    targetPhone = existingCustomer.phone;
+  }
+
+  // Cache hit no banco SQLite: se ja tiver JID verificado e nao for forceRefresh, aproveita
+  if (existingCustomer?.jid && !options.forceRefresh) {
+    return {
+      phone: existingCustomer.phone,
+      jid: existingCustomer.jid,
+      exists: true,
+      fromCache: true,
+      testedCandidates: [],
+      customerId: existingCustomer.id,
+    };
+  }
+
+  const { canonicalPhone, candidates } = resolveBrazilianPhoneCandidates(targetPhone);
+
+  try {
+    const results = await sock.onWhatsApp(...candidates);
+
+    if (results && results.length > 0) {
+      // Busca primeiro resultado ativo retornado pela Meta
+      const activeMatch = results.find((r) => r && r.exists && r.jid);
+
+      if (activeMatch && activeMatch.jid) {
+        const canonicalJid = activeMatch.jid;
+
+        // Salva JID real Meta no banco de dados SQLite
+        if (options.updateDatabase !== false) {
+          if (!existingCustomer) {
+            for (const cand of candidates) {
+              const found = custRepo.findByPhone(cand);
+              if (found) {
+                existingCustomer = found;
+                break;
+              }
+            }
+            if (!existingCustomer) {
+              existingCustomer = custRepo.findByPhone(targetPhone) || custRepo.findByPhone(canonicalPhone);
+            }
+          }
+
+          if (existingCustomer) {
+            custRepo.updateJid(existingCustomer.id, canonicalJid);
+            auditRepo.log(
+              "SYSTEM",
+              "RESOLVE_JID",
+              "customers",
+              existingCustomer.id,
+              {
+                phone: targetPhone,
+                canonicalPhone,
+                resolvedJid: canonicalJid,
+                candidates,
+              }
+            );
+          }
+        }
+
+        return {
+          phone: targetPhone,
+          jid: canonicalJid,
+          exists: true,
+          fromCache: false,
+          testedCandidates: candidates,
+          customerId: existingCustomer?.id,
+        };
+      }
+    }
+  } catch (error) {
+    console.error("[WhatsApp] Erro durante consulta onWhatsApp:", error);
+  }
+
+  // Fallback caso a Meta nao retorne existencia ativa
+  const fallbackJid = `${candidates[0]}@s.whatsapp.net`;
+  return {
+    phone: targetPhone,
+    jid: fallbackJid,
+    exists: false,
+    fromCache: false,
+    testedCandidates: candidates,
+    customerId: existingCustomer?.id,
+  };
+}
+
+/**
+ * Simula presenca humana de digitacao ('composing' por 2.5s a 5.0s antes de texto)
+ */
+export async function simulateTypingPresence(
+  sock: WASocket,
+  jid: string,
+  options?: DispatchOptions
+): Promise<number> {
+  if (options?.skipPresenceSimulation) return 0;
+
+  const min = options?.minComposingMs ?? 2500;
+  const max = options?.maxComposingMs ?? 5000;
+  const delay = getRandomDelay(min, max);
+  const targetJid = jid.includes("@") ? jid : `${jid.replace(/\D/g, "")}@s.whatsapp.net`;
+
+  try {
+    await sock.sendPresenceUpdate("composing", targetJid);
+    await sleep(delay);
+    await sock.sendPresenceUpdate("paused", targetJid);
+  } catch (error) {
+    console.error("[WhatsApp] Falha ao enviar presenca composing:", error);
+  }
+
+  return delay;
+}
+
+/**
+ * Simula presenca humana de gravacao de audio ('recording' por 4.0s a 7.0s antes de audio)
+ */
+export async function simulateRecordingPresence(
+  sock: WASocket,
+  jid: string,
+  options?: DispatchOptions
+): Promise<number> {
+  if (options?.skipPresenceSimulation) return 0;
+
+  const min = options?.minRecordingMs ?? 4000;
+  const max = options?.maxRecordingMs ?? 7000;
+  const delay = getRandomDelay(min, max);
+  const targetJid = jid.includes("@") ? jid : `${jid.replace(/\D/g, "")}@s.whatsapp.net`;
+
+  try {
+    await sock.sendPresenceUpdate("recording", targetJid);
+    await sleep(delay);
+    await sock.sendPresenceUpdate("paused", targetJid);
+  } catch (error) {
+    console.error("[WhatsApp] Falha ao enviar presenca recording:", error);
+  }
+
+  return delay;
+}
+
+/**
+ * Resolve Spintax ({A|B|C}) e interpola variaveis {{chave}}
+ */
+export function resolveSpintax(
+  template: string,
+  variables: Record<string, string | number | undefined | null> = {}
+): string {
+  // 1. Interpola variaveis do template primeiro: {{variavel}}
+  let resolved = template;
+  for (const [key, value] of Object.entries(variables)) {
+    const placeholder = new RegExp(`\\{\\{${key}\\}\\}`, "g");
+    resolved = resolved.replace(placeholder, String(value ?? ""));
+  }
+
+  // 2. Resolve Spintax: {opcao1|opcao2|opcao3}
+  const spintaxRegex = /\{([^{}]+)\}/;
+  while (true) {
+    const match = spintaxRegex.exec(resolved);
+    if (!match) break;
+    const choices = match[1].split("|");
+    const chosen = choices[Math.floor(Math.random() * choices.length)];
+    resolved = resolved.slice(0, match.index) + chosen + resolved.slice(match.index + match[0].length);
+  }
+
+  return resolved;
+}
+
+/**
+ * Envia mensagem de texto com simulacao humana de digitacao ('composing')
+ */
+export async function sendTextMessage(
+  sock: WASocket,
+  jid: string,
+  text: string,
+  options?: DispatchOptions
+): Promise<DispatchResult> {
+  const startTime = Date.now();
+  const targetJid = jid.includes("@") ? jid : `${jid.replace(/\D/g, "")}@s.whatsapp.net`;
+
+  try {
+    await simulateTypingPresence(sock, targetJid, options);
+
+    const sent = await sock.sendMessage(targetJid, {
+      text,
+    });
+
+    const durationMs = Date.now() - startTime;
+    return {
+      success: true,
+      messageId: sent?.key.id ?? undefined,
+      jid: targetJid,
+      durationMs,
+    };
+  } catch (error: unknown) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    return {
+      success: false,
+      jid: targetJid,
+      durationMs: Date.now() - startTime,
+      error: errorMsg,
+    };
+  }
+}
+
+/**
+ * Envia audio nativo no formato .ogg com codec Opus e ptt: true
+ */
+export async function sendAudioPtt(
+  sock: WASocket,
+  jid: string,
+  audioPathOrBuffer: string | Buffer,
+  options?: DispatchOptions
+): Promise<DispatchResult> {
+  const startTime = Date.now();
+  const targetJid = jid.includes("@") ? jid : `${jid.replace(/\D/g, "")}@s.whatsapp.net`;
+
+  try {
+    let audioBuffer: Buffer;
+
+    if (Buffer.isBuffer(audioPathOrBuffer)) {
+      audioBuffer = audioPathOrBuffer;
+    } else {
+      let resolvedPath = path.isAbsolute(audioPathOrBuffer)
+        ? audioPathOrBuffer
+        : path.resolve(env.paths.mediaDir, audioPathOrBuffer);
+
+      if (!fs.existsSync(resolvedPath)) {
+        resolvedPath = path.resolve(process.cwd(), audioPathOrBuffer);
+      }
+
+      if (!fs.existsSync(resolvedPath)) {
+        throw new Error(`Arquivo de audio PTT nao encontrado no caminho: ${audioPathOrBuffer}`);
+      }
+
+      audioBuffer = await fs.promises.readFile(resolvedPath);
+    }
+
+    if (audioBuffer.length === 0) {
+      throw new Error("Buffer de audio PTT esta vazio.");
+    }
+
+    // Simula gravacao humana de audio (4s a 7s)
+    await simulateRecordingPresence(sock, targetJid, options);
+
+    // Envio com codec Opus e parametro ptt: true obrigatorio
+    const sent = await sock.sendMessage(targetJid, {
+      audio: audioBuffer,
+      mimetype: "audio/ogg; codecs=opus",
+      ptt: true,
+    });
+
+    const durationMs = Date.now() - startTime;
+    return {
+      success: true,
+      messageId: sent?.key.id ?? undefined,
+      jid: targetJid,
+      durationMs,
+    };
+  } catch (error: unknown) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    return {
+      success: false,
+      jid: targetJid,
+      durationMs: Date.now() - startTime,
+      error: errorMsg,
+    };
+  }
+}
+
+/**
+ * Envia documento anexado (ex: PDFs de entrega do catalogo) com simulacao humana
+ */
+export async function sendDocumentMessage(
+  sock: WASocket,
+  jid: string,
+  filePathOrBuffer: string | Buffer,
+  fileName: string,
+  mimetype = "application/pdf",
+  caption?: string,
+  options?: DispatchOptions
+): Promise<DispatchResult> {
+  const startTime = Date.now();
+  const targetJid = jid.includes("@") ? jid : `${jid.replace(/\D/g, "")}@s.whatsapp.net`;
+
+  try {
+    let documentBuffer: Buffer;
+
+    if (Buffer.isBuffer(filePathOrBuffer)) {
+      documentBuffer = filePathOrBuffer;
+    } else {
+      let resolvedPath = path.isAbsolute(filePathOrBuffer)
+        ? filePathOrBuffer
+        : path.resolve(env.paths.mediaDir, filePathOrBuffer);
+
+      if (!fs.existsSync(resolvedPath)) {
+        resolvedPath = path.resolve(process.cwd(), filePathOrBuffer);
+      }
+
+      if (!fs.existsSync(resolvedPath)) {
+        throw new Error(`Arquivo de documento nao encontrado no caminho: ${filePathOrBuffer}`);
+      }
+
+      documentBuffer = await fs.promises.readFile(resolvedPath);
+    }
+
+    await simulateTypingPresence(sock, targetJid, options);
+
+    const sent = await sock.sendMessage(targetJid, {
+      document: documentBuffer,
+      mimetype,
+      fileName,
+      caption,
+    });
+
+    const durationMs = Date.now() - startTime;
+    return {
+      success: true,
+      messageId: sent?.key.id ?? undefined,
+      jid: targetJid,
+      durationMs,
+    };
+  } catch (error: unknown) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    return {
+      success: false,
+      jid: targetJid,
+      durationMs: Date.now() - startTime,
+      error: errorMsg,
+    };
+  }
+}
+
+export interface DispatchQueueJobOptions extends DispatchOptions {
+  readonly customerRepo?: CustomerRepository;
+  readonly queueRepo?: MessageQueueRepository;
+  readonly auditRepo?: AuditLogRepository;
+}
+
+/**
+ * Despacha um job pendente da tabela message_queue pelo socket WhatsApp
+ */
+export async function dispatchQueueJob(
+  job: QueueJob,
+  sock: WASocket,
+  options?: DispatchQueueJobOptions
+): Promise<DispatchResult> {
+  const queueRepo = options?.queueRepo ?? messageQueueRepository;
+  const isMarked = queueRepo.markAsProcessing(job.id);
+  if (!isMarked && job.status !== "PROCESSING") {
+    return {
+      success: false,
+      jid: job.jid || "",
+      durationMs: 0,
+      error: `Job ${job.id} nao pode ser colocado em status PROCESSING (status atual: ${job.status}).`,
+    };
+  }
+
+  // Obtem ou resolve JID do destinatario
+  let targetJid = job.jid;
+  if (!targetJid || !targetJid.includes("@")) {
+    const resolved = await resolveJid(job.phone, sock, {
+      updateDatabase: true,
+      customerRepo: options?.customerRepo,
+      auditRepo: options?.auditRepo,
+    });
+    targetJid = resolved.jid;
+  }
+
+  let result: DispatchResult;
+
+  if (job.message_type === "AUDIO_PTT" || job.message_type === "audio_ptt") {
+    const audioTarget = job.media_path || job.content;
+    result = await sendAudioPtt(sock, targetJid, audioTarget, options);
+  } else if (job.message_type === "DOCUMENT" || job.message_type === "document") {
+    const docPath = job.media_path || job.content;
+    const fileName = path.basename(docPath);
+    const caption = job.content !== docPath ? job.content : undefined;
+    result = await sendDocumentMessage(sock, targetJid, docPath, fileName, "application/pdf", caption, options);
+  } else {
+    result = await sendTextMessage(sock, targetJid, job.content, options);
+  }
+
+  if (result.success) {
+    queueRepo.markAsSent(job.id);
+  } else {
+    queueRepo.markAsFailed(job.id, result.error || "Falha desconhecida no despacho");
+  }
+
+  return result;
+}
