@@ -124,3 +124,12 @@ DATABASE_PATH=./data/ai_agents.db
 OPENAI_API_KEY=mock_key
 ```
 - Se as chaves externas não forem configuradas no ambiente, o sistema não deve falhar nem lançar exceções; ele deve utilizar geradores determinísticos em memória garantindo resposta aos endpoints REST.
+
+---
+
+## CONTRATOS REAIS IMPLEMENTADOS EM DISCO (VERIFICADOS)
+*Sincronização autônoma realizada pelo DecoHUB a partir do código-fonte em disco:*
+- **Tabelas Físicas SQLite Identificadas:** `audit_logs`, `customers`, `message_queue`, `orders`, `system_settings`
+- **Rotas REST Físicas Detectadas:**
+  - Nenhuma rota REST identificada
+- **Data/Hora da Última Verificação:** 2026-10-31T20:04:49.064Z
