@@ -1,5 +1,5 @@
 # Histórico de Arquivos Criados/Alterados — WhatsappEntrega
-*Atualizado em: 2026-10-31T21:16:00.000Z | Arquivos rastreados: 13*
+*Atualizado em: 2026-10-31T21:30:00.000Z | Arquivos rastreados: 11*
 
 - `package.json`
 - `tsconfig.json`
@@ -9,8 +9,6 @@
 - `src/database/connection.ts`
 - `src/database/repositories.ts`
 - `src/database/schema.sql`
-- `src/whatsapp/types.ts`
 - `src/whatsapp/socket.ts`
 - `src/whatsapp/dispatcher.ts`
-- `src/whatsapp/index.ts`
 - `test/whatsapp.test.ts`

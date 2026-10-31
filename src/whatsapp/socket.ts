@@ -12,14 +12,61 @@ import makeWASocket, {
 import { Boom } from "@hapi/boom";
 import pino from "pino";
 import { env, ensureDataDirectoriesExist } from "../config/env.js";
-import type {
-  WhatsAppConnectionStatus,
-  WhatsAppSocketOptions,
-  InboundWhatsAppMessage,
-  InboundMessageHandler,
-  ConnectionStatusHandler,
-  PairingCodeHandler,
-} from "./types.js";
+
+/**
+ * Ciclo de vida da conexao WhatsApp Baileys
+ */
+export type WhatsAppConnectionStatus =
+  | "IDLE"
+  | "CONNECTING"
+  | "CONNECTED"
+  | "DISCONNECTED"
+  | "RECONNECTING"
+  | "LOGGED_OUT";
+
+export type PairingCodeHandler = (code: string) => void | Promise<void>;
+
+/**
+ * Opcoes configuraveis para o socket Baileys
+ */
+export interface WhatsAppSocketOptions {
+  readonly authInfoDir?: string;
+  readonly pairingPhone?: string;
+  readonly printQrTerminal?: boolean;
+  readonly autoReconnect?: boolean;
+  readonly maxReconnectAttempts?: number;
+  readonly baseReconnectDelayMs?: number;
+  readonly maxReconnectDelayMs?: number;
+  readonly pairingCodeDelayMs?: number;
+  readonly onPairingCode?: PairingCodeHandler;
+  readonly logLevel?: "fatal" | "error" | "warn" | "info" | "debug" | "trace" | "silent";
+  readonly socketFactory?: (config: any) => WASocket;
+  readonly authStateLoader?: (dir: string) => Promise<{ state: any; saveCreds: () => Promise<void> }>;
+}
+
+/**
+ * Mensagem recebida filtrada (fromMe: false)
+ */
+export interface InboundWhatsAppMessage {
+  readonly id: string;
+  readonly fromJid: string;
+  readonly senderPhone: string;
+  readonly senderName?: string;
+  readonly text: string;
+  readonly timestamp: number;
+  readonly isGroup: boolean;
+  readonly rawMessage: WAMessage;
+}
+
+export type InboundMessageHandler = (
+  message: InboundWhatsAppMessage,
+  sock: WASocket
+) => void | Promise<void>;
+
+export type ConnectionStatusHandler = (
+  status: WhatsAppConnectionStatus,
+  error?: Error | unknown
+) => void | Promise<void>;
 
 /**
  * Extrai texto util de diferentes formatos de mensagens do Baileys

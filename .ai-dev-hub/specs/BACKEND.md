@@ -132,4 +132,4 @@ OPENAI_API_KEY=mock_key
 - **Tabelas Físicas SQLite Identificadas:** `audit_logs`, `customers`, `message_queue`, `orders`, `system_settings`
 - **Rotas REST Físicas Detectadas:**
   - Nenhuma rota REST identificada
-- **Data/Hora da Última Verificação:** 2026-10-31T20:04:51.033Z
+- **Data/Hora da Última Verificação:** 2026-10-31T21:25:55.572Z

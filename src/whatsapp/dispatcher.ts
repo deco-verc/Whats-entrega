@@ -12,11 +12,40 @@ import {
   type Customer,
   type QueueJob,
 } from "../database/repositories.js";
-import type {
-  DispatchOptions,
-  DispatchResult,
-  JidResolutionResult,
-} from "./types.js";
+
+/**
+ * Resultado da resolucao do JID com normalizacao do 9º digito brasileiro
+ */
+export interface JidResolutionResult {
+  readonly phone: string;
+  readonly jid: string;
+  readonly exists: boolean;
+  readonly fromCache: boolean;
+  readonly testedCandidates: readonly string[];
+  readonly customerId?: string;
+}
+
+/**
+ * Parametros de configuracao do despacho com simulacao humana
+ */
+export interface DispatchOptions {
+  readonly skipPresenceSimulation?: boolean;
+  readonly minComposingMs?: number;
+  readonly maxComposingMs?: number;
+  readonly minRecordingMs?: number;
+  readonly maxRecordingMs?: number;
+}
+
+/**
+ * Resultado do envio de uma mensagem
+ */
+export interface DispatchResult {
+  readonly success: boolean;
+  readonly messageId?: string;
+  readonly jid: string;
+  readonly durationMs: number;
+  readonly error?: string;
+}
 
 /**
  * Utilitario de espera assincrona (sleep)
