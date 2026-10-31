@@ -1,0 +1,39 @@
+{
+  "name": "whatsapp-entrega",
+  "version": "1.0.0",
+  "description": "Sistema monolitico modular de automacao Direct Response no WhatsApp com Baileys, SQLite e Cakto",
+  "main": "dist/src/config/env.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/src/config/env.js",
+    "dev": "tsx watch src/config/env.ts",
+    "test": "tsx --test test/**/*.test.ts"
+  },
+  "keywords": [
+    "whatsapp",
+    "baileys",
+    "cakto",
+    "funnel",
+    "automation",
+    "sqlite"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@whiskeysockets/baileys": "^7.0.0-rc14",
+    "better-sqlite3": "^13.0.3",
+    "dotenv": "^18.0.9",
+    "express": "^5.3.0",
+    "pino": "^10.4.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.6",
+    "pino-pretty": "^13.2.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

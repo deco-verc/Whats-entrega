@@ -2,6 +2,7 @@
 .env
 *.env
 .env.*
+!.env.example
 *.key
 *.pem
 credentials.json
@@ -12,3 +13,5 @@ hub.db-shm
 node_modules/
 dist/
 .gemini/
+data/
+*.log

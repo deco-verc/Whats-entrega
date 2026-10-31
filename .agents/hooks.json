@@ -1,0 +1,34 @@
+{
+  "decohub-pre-invocation-reminder": {
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "node ./hooks/pre-invocation-reminder.cjs",
+        "timeout": 15
+      }
+    ]
+  },
+  "decohub-pre-tool-guard": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ./hooks/pre-tool-ownership-guard.cjs",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  },
+  "decohub-stop-typecheck-gate": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "node ./hooks/stop-typecheck-gate.cjs",
+        "timeout": 30
+      }
+    ]
+  }
+}

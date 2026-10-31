@@ -1,0 +1,137 @@
+{
+  "briefing": "# ROLE & OBJECTIVE\nVocê é um Arquiteto de Software Sênior especialista em sistemas de automação de Direct Response no WhatsApp, Node.js, TypeScript, SQLite (`better-sqlite3`) e na biblioteca `@whiskeysockets/baileys`.\n\nSua missão é projetar e especificar de ponta a ponta um sistema monolítico modular auto-hospedado (rodando em uma VPS Ubuntu no Google Cloud) que recebe Webhooks da plataforma de pagamentos **Cakto** e executa automaticamente um funil completo de **Recuperação de Pix + Entrega Imediata -> Upsell 1 -> Upsell 2 / Downsell** via WhatsApp.\n\n---\n\n# 1. STACK TECNOLÓGICA & DOCUMENTAÇÕES DE REFERÊNCIA\n\n## Stack Obrigatória\n- **Runtime & Linguagem:** Node.js (LTS) + TypeScript (Strict Mode).\n- **Servidor HTTP (Webhooks):** Fastify ou Express (focado em responder `200 OK` em menos de 100ms).\n- **Motor WhatsApp:** `@whiskeysockets/baileys` (Conexão via WebSocket puro, usando *Pairing Code* de 8 dígitos ou QR Code no terminal, com `useMultiFileAuthState`).\n- **Banco de Dados & Fila:** `better-sqlite3` rodando localmente com `PRAGMA journal_mode = WAL;` ativado para concorrência simultânea de leitura (Worker) e escrita (Webhooks).\n- **Processamento de Áudio:** `ffmpeg` para envio de áudios como PTT nativo (nota de voz gravada na hora, formato `.ogg` com codec `libopus`, `ptt: true`).\n- **Infraestrutura Alvo:** VPS Google Cloud (`e2-micro` Ubuntu LTS), gerenciada por PM2 e com Caddy Server fazendo Reverse Proxy HTTPS automático.\n\n## Documentações Oficiais da Stack\n- **Baileys (Repositório e README):** https://github.com/WhiskeySockets/Baileys\n- **Baileys (Wiki & Arquitetura de Conexão, Auth, Mensagens e Eventos):** https://baileys.wiki\n- **Baileys (Guia de Migração v7+):** https://whiskey.so/migrate-latest\n- **SQLite (`better-sqlite3` Repositório):** https://github.com/WiseLibs/better-sqlite3\n- **SQLite (Performance e Modo WAL):** https://github.com/WiseLibs/better-sqlite3/blob/master/docs/performance.md\n- **SQLite (Boas Práticas de Modelagem):** https://github.com/WiseLibs/better-sqlite3/blob/master/docs/tips.md\n- **Google Cloud Compute Engine Docs:** https://docs.cloud.google.com/compute/docs\n- **Google Cloud Specs (`e2-micro`):** https://cloud.google.com/products/compute\n- **PM2 Process Management:** https://pm2.io/docs/runtime/guide/process-management/\n- **Caddy Server Reverse Proxy (Auto-HTTPS):** https://caddyserver.com/docs/caddyfile/directives/reverse_proxy\n\n---\n\n# 2. BLUEPRINT DE DIRETÓRIOS E ARQUIVOS DO PROJETO\n\nO sistema deve seguir rigorosamente esta árvore modular onde cada diretório e arquivo possui responsabilidade única:\n\n- **`/data/`** (Ignorada no Git - Persistência Local)\n  - **`/data/auth_info/`**: Arquivos JSON das chaves criptográficas da sessão do Baileys.\n  - **`/data/database/`**: Arquivo `funnel.db` (e arquivos `-wal` e `-shm` do SQLite).\n  - **`/data/media/`**: PDFs de entrega, imagens de prova social e áudios de pitch convertidos em `.ogg` (codec Opus).\n- **`/src/config/`**\n  - **`env.ts`**: Carregamento e validação de variáveis de ambiente (porta HTTP, `CAKTO_WEBHOOK_SECRET`, número do WhatsApp para *Pairing Code*, caminhos de diretórios).\n  - **`catalog.ts`**: Mapa declarativo de produtos e ofertas da Cakto (`product_id` / `offer_id`), definindo o tipo (`MAIN`, `UPSELL_1`, `UPSELL_2`, `DOWNSELL`), arquivos de mídia locais da entrega, mensagens e árvore de próximos passos (delays e links de checkout).\n- **`/src/database/`**\n  - **`connection.ts`**: Inicialização do `better-sqlite3`, ativação obrigatória do modo `WAL` (`PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;`) e execução do DDL das tabelas (`customers`, `orders`, `message_queue`).\n  - **`repositories.ts`**: Métodos transacionais prontos para upsert de clientes, registro idempotente de pedidos, inserção de jobs na fila, cancelamento de jobs pendentes e atualização de estágio do funil.\n- **`/src/whatsapp/`**\n  - **`socket.ts`**: Gerenciamento da conexão WebSocket do Baileys, geração de *Pairing Code* de 8 caracteres no terminal, reconexão automática inteligente (`DisconnectReason.loggedOut` vs falha de rede) e listener de mensagens recebidas (`messages.upsert`).\n  - **`dispatcher.ts`**: Resolução e validação do 9º dígito na rede da Meta (`onWhatsApp`), simulação de presença humana (`composing` e `recording`) e envio de textos, documentos PDF e áudios PTT.\n- **`/src/webhooks/`**\n  - **`server.ts`**: Servidor HTTP leve expondo a rota `POST /webhook/cakto` e rota de healthcheck.\n  - **`adapters.ts`**: Validação do segredo da Cakto, extração e normalização do payload bruto da Cakto para o DTO interno padronizado do sistema.\n- **`/src/engine/`**\n  - **`state-machine.ts`**: Cérebro do funil que processa os eventos vindos do Webhook ou da resposta do cliente no WhatsApp, alterando estados e manipulando a fila.\n  - **`worker.ts`**: Loop assíncrono que lê a tabela `message_queue` a cada 5 segundos, processa um cliente por vez (fila indiana), resolve o *Spintax* dos textos, aplica atrasos elásticos (*Jitter*) e aciona o `dispatcher.ts`.\n\n---\n\n# 3. ESPECIFICAÇÃO DOS MÓDULOS E REGRAS DE NEGÓCIO\n\n## A. Módulo Receptor e Adaptador da Cakto (`/src/webhooks/`)\n- **Validação de Segurança:** Conferir o token secreto enviado pela Cakto (no campo `secret` do JSON, header `x-cakto-signature` ou query param) comparando com `CAKTO_WEBHOOK_SECRET`. Rejeitar requisições inválidas com `401 Unauthorized`.\n- **Mapeamento de Eventos Cakto:**\n  - `purchase_approved`: Compra paga/aprovada -> Aciona Entrega Imediata + Funil de Upsell.\n  - `pix_generated` / `waiting_payment`: Pix gerado -> Agenda recuperação de Pix na fila.\n  - `purchase_refunded` / `chargeback`: Reembolso ou estorno -> Cancela imediatamente todos os jobs `PENDING` daquele cliente na fila e muda o status do cliente para `REFUNDED`.\n- **Normalização (Adapter):** Extrair da estrutura da Cakto (`data.id`, `data.status`, `data.customer.name`, `data.customer.phone`, `data.customer.email`, `data.product.id`, `data.offer.id`, `data.pix.qr_code_text`) e converter para um DTO interno limpo.\n- **Idempotência Estrita:** Garantir no SQLite que a combinação `transaction_id` + `event_type` nunca seja processada duas vezes caso a Cakto reenvie o mesmo webhook. Responder `200 OK` imediatamente.\n\n## B. Módulo Core Baileys & Resolver do 9º Dígito (`/src/whatsapp/`)\n- **JID Resolver (Problema do 9º Dígito no Brasil):** Números brasileiros digitados no checkout da Cakto podem vir com ou sem o 9º dígito, e contas antigas do WhatsApp (DDDs 31 a 99) frequentemente não possuem o `9` no JID interno da Meta. Antes do primeiro envio, o sistema DEVE higienizar a string (DDI `55` + DDD + Número) e consultar `sock.onWhatsApp(phone)` para descobrir o `jid` real registrado no servidor do WhatsApp (`55XX9XXXXXXXX@s.whatsapp.net` ou `55XXXXXXXXXX@s.whatsapp.net`), salvando o JID validado na tabela `customers`.\n- **Ouvinte de Respostas (`messages.upsert`):** Escutar eventos onde `fromMe === false`. Quando um cliente cadastrado no banco responder no WhatsApp, acionar imediatamente a Máquina de Estados passando o telefone/JID e o texto recebido.\n\n## C. Máquina de Estados Híbrida do Funil (`/src/engine/state-machine.ts`)\nO funil deve operar combinando **Gatilhos de Tempo** e **Gatilhos de Interação (Micro-comprometimento)**:\n1. **Gatilho Pix Gerado (`pix_generated`):**\n   - Agenda job `PIX_RECOVERY` para `now + 7 minutos` enviando o código Pix Copia e Cola e mensagem de ajuda.\n2. **Gatilho Compra do Produto Principal (`MAIN` - `purchase_approved`):**\n   - Cancela qualquer job `PIX_RECOVERY` pendente para aquele telefone.\n   - Agenda `DELIVERY_MAIN` para execução imediata (`now`). A última mensagem do pacote de entrega deve conter uma pergunta de micro-comprometimento (ex: *\"Conseguiu abrir o material direitinho? Me responde SIM aqui só para eu confirmar\"*).\n   - Atualiza o estado do cliente para `DELIVERED_MAIN`.\n   - Agenda `PITCH_UPSELL_1` para `now + 15 minutos` (fallback automático por tempo caso o cliente não responda).\n3. **Gatilho de Ouro — Micro-comprometimento (Cliente respondeu no WhatsApp):**\n   - Se o cliente está no estado `DELIVERED_MAIN` e envia qualquer mensagem no WhatsApp, a Máquina de Estados localiza o job `PITCH_UPSELL_1` que estava aguardando os 15 minutos e **atualiza o `scheduled_at` para `now`**, disparando o pitch de áudio + link do Upsell 1 imediatamente enquanto o cliente está com a conversa aberta.\n4. **Gatilho Compra do Upsell 1 (`UPSELL_1` - `purchase_approved`):**\n   - Cancela qualquer job pendente de `PITCH_UPSELL_1` ou `PITCH_DOWNSELL_1`.\n   - Atualiza estado do cliente para `DELIVERED_UPSELL_1`.\n   - Agenda `DELIVERY_UPSELL_1` para `now`.\n   - Agenda `PITCH_UPSELL_2` para `now + 15 minutos`.\n5. **Gatilho Não Comprou Upsell 1 (Downsell por Tempo):**\n   - Quando o `PITCH_UPSELL_1` é enviado, o sistema já deixa agendado o `PITCH_DOWNSELL_1` para `now + 2 horas` (ou 24h), oferecendo uma condição especial/menor ticket da Cakto caso o Upsell 1 não seja comprado nesse intervalo.\n\n## D. Motor de Fila e Camada Anti-Banimento (`/src/engine/worker.ts`)\n- **Concorrência Controlada (Fila Indiana):** O Worker verifica o banco a cada 5 segundos e processa estritamente 1 job por vez para evitar rajadas simultâneas que banem o chip.\n- **Simulação de Presença Humana:**\n  - Antes de cada balão de texto: enviar `sock.sendPresenceUpdate('composing', jid)` e aguardar um tempo proporcional ao tamanho do texto (entre 2.5s e 5s).\n  - Antes de cada áudio PTT: enviar `sock.sendPresenceUpdate('recording', jid)` e aguardar entre 4s e 7s.\n- **Jitter (Delay Elástico):** Aplicar atraso aleatório entre cada mensagem do mesmo pacote (ex: 3s a 6s) e uma pausa de respiro entre um cliente e outro.\n- **Motor Spintax:** Resolver expressões `{Olá|Oi|Fala|Tudo bem}, *{{first_name}}*!` no momento do disparo para garantir que cada mensagem enviada tenha um hash único nos servidores da Meta.\n\n---\n\n# 4. ESPECIFICAÇÃO DE INFRAESTRUTURA (GOOGLE CLOUD VPS)\n\nO sistema deve ser desenhado considerando o ambiente de produção abaixo:\n- **Máquina Virtual:** Google Cloud Compute Engine `e2-micro` (2 vCPUs compartilhadas, 1 GB RAM, Ubuntu 22.04/24.04 LTS, 20-30 GB Standard Persistent Disk) com **2 GB de arquivo Swap** ativado no Linux para evitar *Out-Of-Memory*.\n- **Consumo de Recursos:** Manter o footprint de RAM entre 60 MB e 120 MB (sem uso de Chromium/Puppeteer).\n- **Rede, Firewall e HTTPS:** Portas 80 e 443 abertas no Firewall da VPC do GCP; aplicação Node.js rodando internamente na porta `3000` (fechada para fora) e exposta via **Caddy Server** fazendo `reverse_proxy localhost:3000` com SSL/HTTPS automático para o subdomínio do webhook.\n- **Dependências de Sistema:** `ffmpeg` instalado nativamente no Ubuntu para conversão/validação de áudios `.ogg` (`libopus`) e **PM2** configurado com `pm2 startup` e `pm2 save` para manter o processo vivo 24/7.\n\n---\n\n# 5. O QUE DEVE SER ENTREGUE E CONSTRUÍDO AGORA\n\nCom base em todas as especificações acima, estruture e entregue a engenharia completa do projeto contendo:\n\n1. **Schema SQLite Completo (DDL):** Código SQL exato das tabelas (`customers`, `orders`, `message_queue`), chaves primárias, restrições de unicidade para idempotência e todos os índices (`CREATE INDEX`) necessários para o Worker consultar a fila sem custo de CPU.\n2. **Contratos TypeScript e Interfaces:** Tipagens completas do Payload recebido da Cakto, do DTO interno normalizado, da estrutura de configuração do `catalog.ts` e dos payloads JSON da fila de mensagens.\n3. **Tabela Verdade da Máquina de Estados:** Mapeamento exato de todas as transições (`Estado Atual` + `Gatilho/Evento` -> `Jobs Cancelados` + `Jobs Criados na Fila` + `Novo Estado`).\n4. **Implementação dos Módulos Core:** Detalhamento técnico e código estrutural completo de cada arquivo da árvore (`/src/config/*`, `/src/database/*`, `/src/whatsapp/*`, `/src/webhooks/*`, `/src/engine/*` e `src/index.ts`), além dos arquivos `package.json`, `tsconfig.json`, `Caddyfile` e comandos de provisionamento da VPS no Google Cloud.",
+  "createdAt": "2026-10-31T19:21:16.489Z",
+  "projectName": "WhatsappEntrega",
+  "stack": {
+    "framework": "Node.js • TypeScript • Baileys • SQLite WAL • Fastify/Express",
+    "architecture": "Arquitetura Monolítica Modular com Fila Anti-Ban, Máquina de Estados e SQLite WAL"
+  },
+  "proposedTasks": [
+    {
+      "code": "TK-1",
+      "title": "Configuração Base, Variáveis de Ambiente e Catálogo de Produtos",
+      "description": "Configurar ambiente TypeScript Strict, package.json com dependências rigorosas (@whiskeysockets/baileys, better-sqlite3, fastify ou express, pino, dotenv), tsconfig.json, validação estrita de variáveis de ambiente em src/config/env.ts (porta HTTP, CAKTO_WEBHOOK_SECRET, telefone para Pairing Code, diretórios /data/auth_info, /data/database, /data/media) e catálogo declarativo de produtos/ofertas Cakto em src/config/catalog.ts (MAIN, UPSELL_1, UPSELL_2, DOWNSELL com mídias locais, delays e links de checkout).",
+      "expectedFiles": [
+        "package.json",
+        "tsconfig.json",
+        "src/config/env.ts",
+        "src/config/catalog.ts",
+        ".env.example"
+      ],
+      "criteria": [
+        "package.json e tsconfig.json configurados com strict mode e dependências do Baileys e better-sqlite3",
+        "src/config/env.ts carregando e validando todas as variáveis obrigatórias com fail-fast",
+        "src/config/catalog.ts mapeando produtos MAIN, UPSELL_1, UPSELL_2 e DOWNSELL com links e mídias",
+        "Arquivo .env.example provisionado documentando todas as variáveis"
+      ],
+      "dependencies": [],
+      "verificationCommand": "npx tsc --noEmit"
+    },
+    {
+      "code": "TK-2",
+      "title": "Camada de Banco de Dados SQLite em Modo WAL, Schema DDL e Repositórios Transacionais",
+      "description": "Inicializar better-sqlite3 em src/database/connection.ts ativando obrigatoriamente PRAGMA journal_mode = WAL e PRAGMA synchronous = NORMAL. Criar schema DDL completo em src/database/schema.sql com tabelas customers (id, phone, jid, name, email, current_state, created_at, updated_at), orders (id, transaction_id, customer_id, product_id, offer_id, event_type, status, paid_at, raw_payload) com constraint UNIQUE(transaction_id, event_type) para idempotência estrita, message_queue (id, customer_id, phone, jid, message_type, content, media_path, scheduled_at, status, attempts, last_error) com índices para scheduled_at e status. Implementar em src/database/repositories.ts repositórios transacionais atômicos com queries preparadas.",
+      "expectedFiles": [
+        "src/database/connection.ts",
+        "src/database/repositories.ts",
+        "src/database/schema.sql"
+      ],
+      "criteria": [
+        "Conexão better-sqlite3 configurada em src/database/connection.ts com modo WAL ativado",
+        "Schema SQL em src/database/schema.sql com tabelas customers, orders, message_queue e índices otimizados",
+        "Constraint UNIQUE(transaction_id, event_type) garantindo idempotência estrita de webhooks",
+        "Repositórios transacionais em src/database/repositories.ts com métodos de inserção, busca e agendamento"
+      ],
+      "dependencies": [
+        "TK-1"
+      ],
+      "verificationCommand": "npx tsc --noEmit"
+    },
+    {
+      "code": "TK-3",
+      "title": "Motor WhatsApp Baileys, JID Resolver do 9º Dígito e Dispatcher com Simulação Humana e PTT",
+      "description": "Implementar ciclo de vida completo da conexão Baileys em src/whatsapp/socket.ts utilizando useMultiFileAuthState armazenando chaves em /data/auth_info, suporte a Pairing Code no terminal para conexão sem QR code, reconexão automática resiliente e escuta de connection.update e messages.upsert (fromMe: false). Implementar em src/whatsapp/dispatcher.ts o JID Resolver via sock.onWhatsApp(phone) para normalização do 9º dígito brasileiro (salvando JID real Meta no banco), simulação de presença humana (composing por 2.5s-5s antes de texto, recording por 4s-7s antes de áudio) e envio de áudios nativos no formato .ogg com codec Opus e ptt: true.",
+      "expectedFiles": [
+        "src/whatsapp/socket.ts",
+        "src/whatsapp/dispatcher.ts"
+      ],
+      "criteria": [
+        "Gerenciador de conexão Baileys em src/whatsapp/socket.ts com auth state em /data/auth_info e pairing code",
+        "Resolver do 9º dígito sanitizando telefone (DDI 55) e consultando sock.onWhatsApp() antes do primeiro envio",
+        "Dispatcher em src/whatsapp/dispatcher.ts com presença humana (composing/recording) e envio de áudios PTT nativos",
+        "Ouvinte de mensagens recebidas (messages.upsert) direcionando para a máquina de estados"
+      ],
+      "dependencies": [
+        "TK-1",
+        "TK-2"
+      ],
+      "verificationCommand": "npx tsc --noEmit"
+    },
+    {
+      "code": "TK-4",
+      "title": "Servidor HTTP de Webhooks Cakto, Validação de Secret e Adapters de Normalização",
+      "description": "Implementar servidor HTTP Fastify ou Express em src/webhooks/server.ts expondo endpoint POST /webhook/cakto respondendo 200 OK imediato (< 100ms) para evitar timeouts da plataforma Cakto. Validar assinatura/secret via header ou query param (CAKTO_WEBHOOK_SECRET). Implementar em src/webhooks/adapters.ts adapters para normalização dos payloads da Cakto (purchase_approved, pix_generated, boleto_generated), extraindo customer (telefone sanitizado, nome, email), dados do pedido (transaction_id, produto, oferta, código Pix) e registrando a transação no SQLite com garantia de idempotência estrita.",
+      "expectedFiles": [
+        "src/webhooks/server.ts",
+        "src/webhooks/adapters.ts"
+      ],
+      "criteria": [
+        "Servidor HTTP em src/webhooks/server.ts ouvindo POST /webhook/cakto e respondendo 200 OK imediatamente",
+        "Validação segura do CAKTO_WEBHOOK_SECRET rejeitando requisições não autorizadas",
+        "Adapters em src/webhooks/adapters.ts normalizando payloads da Cakto para DTOs internos limpos",
+        "Bloqueio de eventos duplicados através da constraint de unicidade no SQLite"
+      ],
+      "dependencies": [
+        "TK-1",
+        "TK-2"
+      ],
+      "verificationCommand": "npx tsc --noEmit"
+    },
+    {
+      "code": "TK-5",
+      "title": "Máquina de Estados Híbrida do Funil de Vendas e Recuperação por Micro-Comprometimento",
+      "description": "Implementar em src/engine/state-machine.ts a máquina de estados híbrida do funil integrando gatilhos temporais e conversacionais: 1. Pix Gerado: agenda PIX_RECOVERY para now + 7min com Pix Copia e Cola; 2. Compra MAIN Aprovada: cancela recuperação Pix, agenda DELIVERY_MAIN imediato com micro-comprometimento no último balão (\"Conseguiu abrir o material? Me responde SIM\"), atualiza estado para DELIVERED_MAIN e agenda PITCH_UPSELL_1 para now + 15min; 3. Gatilho de Micro-comprometimento (resposta no WhatsApp): se cliente em DELIVERED_MAIN responder, antecipa PITCH_UPSELL_1 para imediato (now); 4. Compra UPSELL_1: cancela downsell, entrega imediata e agenda UPSELL_2; 5. Downsell por tempo: caso UPSELL_1 não seja comprado, agenda PITCH_DOWNSELL_1 com oferta alternativa.",
+      "expectedFiles": [
+        "src/engine/state-machine.ts"
+      ],
+      "criteria": [
+        "Máquina de estados gerenciando transições: PIX_PENDING, DELIVERED_MAIN, PITCH_UPSELL_1, DELIVERED_UPSELL_1, PITCH_UPSELL_2, DOWNSELL",
+        "Cancelamento automático de jobs de recuperação Pix pendentes quando a compra principal for aprovada",
+        "Antecipação imediata do pitch de Upsell 1 quando o cliente responde ao micro-comprometimento no WhatsApp",
+        "Agendamento automático de follow-ups e pitches de Downsell com cálculo correto de delays"
+      ],
+      "dependencies": [
+        "TK-2",
+        "TK-3",
+        "TK-4"
+      ],
+      "verificationCommand": "npx tsc --noEmit"
+    },
+    {
+      "code": "TK-6",
+      "title": "Worker de Fila Anti-Banimento com Spintax, Entrypoint Unificado e Infraestrutura GCP VPS",
+      "description": "Implementar o worker de fila em src/engine/worker.ts com concorrência controlada (fila indiana estrita, 1 job por vez, loop a cada 5 segundos). Integrar motor de Spintax ({Olá|Oi|Fala}, {{first_name}}) para unicidade de hash de mensagens na Meta e delays elásticos aleatórios (jitter entre 3s e 6s entre mensagens do mesmo pacote). Criar o entrypoint principal src/index.ts orquestrando inicialização do banco, Baileys, servidor HTTP e worker com encerramento gracioso (SIGINT/SIGTERM). Provisionar arquivos de produção para VPS Ubuntu Google Cloud: Caddyfile (Reverse Proxy Auto-HTTPS), PM2 ecosystem.config.js (auto-restart resiliente) e script setup.sh de provisionamento de VPS.",
+      "expectedFiles": [
+        "src/engine/worker.ts",
+        "src/index.ts",
+        "ecosystem.config.js",
+        "Caddyfile",
+        "setup.sh"
+      ],
+      "criteria": [
+        "Worker em src/engine/worker.ts consumindo a message_queue em fila indiana com 1 envio por vez",
+        "Motor Spintax variando mensagens e aplicando delays elásticos anti-bloqueio",
+        "Entrypoint src/index.ts iniciando todos os módulos de forma coordenada com graceful shutdown",
+        "Arquivos de deploy para GCP VPS provisionados: ecosystem.config.js, Caddyfile e setup.sh"
+      ],
+      "dependencies": [
+        "TK-1",
+        "TK-2",
+        "TK-3",
+        "TK-4",
+        "TK-5"
+      ],
+      "verificationCommand": "npx tsc --noEmit"
+    }
+  ]
+}
