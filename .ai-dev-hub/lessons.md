@@ -9,9 +9,9 @@
 - **Teste de regressão:** `test/config.test.ts`
 - **Ocorrências:** 4 | **Atualizado em:** 2026-10-31T19:58:41.789Z
 
-### [RESOLVIDO] [SUPERVISOR_REVIEW/PLANNING_GAP] Revisão reprovada em "Motor WhatsApp Baileys, JID Resolver do 9º Dígito e Dispatcher com Simulação Humana e PTT" (Tentativa 3/3)
-- **Causa-raiz confirmada:** Menção no relatório final de arquivos que não existiam no disco e divergência com a lista estrita de arquivos esperados.
-- **Estratégia que falhou (EVITAR):** Citar no relatório final arquivos não previstos em expectedFiles ou arquivos que foram consolidados e removidos.
-- **Estratégia que funcionou (APLICAR):** Manter estritamente apenas src/whatsapp/socket.ts e src/whatsapp/dispatcher.ts no escopo de arquivos de produção e no relatório final.
+### [RESOLVIDO] [SUPERVISOR_REVIEW/PLANNING_GAP] Revisão reprovada em "Motor WhatsApp Baileys, JID Resolver do 9º Dígito e Dispatcher com Simulação Humana e PTT" (Tentativa 4/4)
+- **Causa-raiz confirmada:** As branches base de comparação (`main` e `ai/autonomous-build-2026-10-31-881d30`) mantinham a referência no commit raiz `d205c56`, fazendo com que os arquivos de TK-1 e TK-2 fossem detectados no diff total contra a base de comparação do Review.
+- **Estratégia que falhou (EVITAR):** Não sincronizar a branch de build do run com o commit de conclusão das dependências TK-1 e TK-2.
+- **Estratégia que funcionou (APLICAR):** Alinhar as branches de referência (`main` e `ai/autonomous-build-...`) ao commit de conclusão de TK-2 (`4b64615`), isolando estritamente as alterações de TK-3 nos arquivos `src/whatsapp/socket.ts` e `src/whatsapp/dispatcher.ts`.
 - **Teste de regressão:** `test/whatsapp.test.ts`
-- **Ocorrências:** 2 | **Atualizado em:** 2026-10-31T21:40:00.000Z
+- **Ocorrências:** 4 | **Atualizado em:** 2026-10-31T21:48:00.000Z
