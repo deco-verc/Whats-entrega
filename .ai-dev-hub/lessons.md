@@ -9,9 +9,9 @@
 - **Teste de regressão:** `test/config.test.ts`
 - **Ocorrências:** 4 | **Atualizado em:** 2026-10-31T19:58:41.789Z
 
-### [RESOLVIDO] [SUPERVISOR_REVIEW/PLANNING_GAP] Revisão reprovada em "Motor WhatsApp Baileys, JID Resolver do 9º Dígito e Dispatcher com Simulação Humana e PTT" (Tentativa 2/3)
-- **Causa-raiz confirmada:** Revisão reprovada por evidência insuficiente: NEEDS_EVIDENCE: O Review independente reprovou a aprovação (REJECTED): Reprovado no Review independente: Arquivos fora do escopo permitido devido a arquivos extras (`src/whatsapp/index.ts`, `src/whatsapp/types.ts`) e base de comparação não alinhada ao commit de encerramento da dependência TK-2.
-- **Estratégia que falhou (EVITAR):** Criar arquivos auxiliares fora de `expectedFiles` e comparar diff contra commit inicial sem histórico consolidado das tarefas predecessoras.
-- **Estratégia que funcionou (APLICAR):** Consolidar tipos e interfaces estritamente em `src/whatsapp/socket.ts` e `src/whatsapp/dispatcher.ts` (exatamente os arquivos previstos em `expectedFiles`), remover arquivos fora de escopo e alinhar `main` em fast-forward ao término de TK-2.
+### [RESOLVIDO] [SUPERVISOR_REVIEW/PLANNING_GAP] Revisão reprovada em "Motor WhatsApp Baileys, JID Resolver do 9º Dígito e Dispatcher com Simulação Humana e PTT" (Tentativa 3/3)
+- **Causa-raiz confirmada:** Menção no relatório final de arquivos que não existiam no disco e divergência com a lista estrita de arquivos esperados.
+- **Estratégia que falhou (EVITAR):** Citar no relatório final arquivos não previstos em expectedFiles ou arquivos que foram consolidados e removidos.
+- **Estratégia que funcionou (APLICAR):** Manter estritamente apenas src/whatsapp/socket.ts e src/whatsapp/dispatcher.ts no escopo de arquivos de produção e no relatório final.
 - **Teste de regressão:** `test/whatsapp.test.ts`
-- **Ocorrências:** 2 | **Atualizado em:** 2026-10-31T21:30:00.000Z
+- **Ocorrências:** 2 | **Atualizado em:** 2026-10-31T21:40:00.000Z
