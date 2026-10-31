@@ -1,0 +1,14 @@
+# Segredos e Cache protegidos pelo DecoHUB
+.env
+*.env
+.env.*
+*.key
+*.pem
+credentials.json
+token.json
+hub.db
+hub.db-wal
+hub.db-shm
+node_modules/
+dist/
+.gemini/
