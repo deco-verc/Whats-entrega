@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WhatsappEntrega - Disparo Rapido Manual</title>
+  <style>
+    :root {
+      --bg-primary: #090d16;
+      --bg-surface: #111726;
+      --bg-elevated: #1a2236;
+      --text-primary: #f1f5f9;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --accent-primary: #6366f1;
+      --accent-hover: #4f46e5;
+      --accent-subtle: rgba(99, 102, 241, 0.12);
+      --border-subtle: #1e293b;
+      --border-strong: #334155;
+      --status-success: #10b981;
+      --status-warning: #f59e0b;
+      --status-danger: #ef4444;
+      --status-info: #0ea5e9;
+      --radius-sm: 4px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --font-mono: 'JetBrains Mono', Menlo, Consolas, monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-primary);
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      font-size: 14px;
+      line-height: 1.5;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: var(--bg-primary);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--border-strong);
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--text-muted);
+    }
+
+    .tabular-nums {
+      font-variant-numeric: tabular-nums;
+      font-family: var(--font-mono);
+    }
+
+    header {
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+
+    .brand-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-icon {
+      width: 32px;
+      height: 32px;
+      background: var(--accent-subtle);
+      border: 1px solid var(--accent-primary);
+      border-radius: var(--radius-md);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--accent-primary);
+    }
+
+    .brand-title {
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: 13px;
+      padding: 6px 12px;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      transition: all 0.2s ease;
+    }
+
+    .back-link:hover {
+      background: var(--bg-elevated);
+      color: var(--text-primary);
+      border-color: var(--border-strong);
+    }
+
+    main {
+      flex: 1;
+      padding: 24px;
+      max-width: 1200px;
+      width: 100%;
+      margin: 0 auto;
+    }
+
+    .page-header {
+      margin-bottom: 24px;
+    }
+
+    .page-title {
+      font-size: 20px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .page-desc {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .content-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+
+    @media (max-width: 860px) {
+      .content-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+
+    .card-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .card-title {
+      font-size: 14px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .card-body {
+      padding: 20px;
+    }
+
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .form-control {
+      width: 100%;
+      background: var(--bg-primary);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-md);
+      padding: 9px 12px;
+      color: var(--text-primary);
+      font-family: inherit;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.15s ease;
+    }
+
+    .form-control:focus {
+      border-color: var(--accent-primary);
+      box-shadow: 0 0 0 1px var(--accent-primary);
+    }
+
+    textarea.form-control {
+      resize: vertical;
+      min-height: 90px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 500;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      border: none;
+      transition: all 0.15s ease;
+    }
+
+    .btn-primary {
+      background: var(--accent-primary);
+      color: #ffffff;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      background: var(--accent-hover);
+    }
+
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .alert-box {
+      padding: 12px 14px;
+      border-radius: var(--radius-md);
+      margin-bottom: 16px;
+      font-size: 13px;
+      display: none;
+    }
+
+    .alert-box.success {
+      display: block;
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid var(--status-success);
+      color: var(--status-success);
+    }
+
+    .alert-box.error {
+      display: block;
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid var(--status-danger);
+      color: var(--status-danger);
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: var(--radius-sm);
+      font-size: 11px;
+      font-weight: 600;
+      font-family: var(--font-mono);
+    }
+
+    .badge-success {
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--status-success);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .badge-warning {
+      background: rgba(245, 158, 11, 0.15);
+      color: var(--status-warning);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+    }
+
+    .table-responsive {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 13px;
+    }
+
+    th {
+      background: var(--bg-primary);
+      color: var(--text-secondary);
+      font-weight: 500;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border-subtle);
+      color: var(--text-primary);
+    }
+
+    tr:hover td {
+      background: rgba(255, 255, 255, 0.01);
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand-group">
+      <div class="brand-icon">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path>
+        </svg>
+      </div>
+      <div>
+        <div class="brand-title">WhatsappEntrega</div>
+      </div>
+    </div>
+    <a href="/" class="back-link">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="19" y1="12" x2="5" y2="12"></line>
+        <polyline points="12 19 5 12 12 5"></polyline>
+      </svg>
+      Voltar ao Dashboard
+    </a>
+  </header>
+
+  <main>
+    <div class="page-header">
+      <h1 class="page-title">Disparo Rapido Manual</h1>
+      <p class="page-desc">Envio avulso imediato via WhatsApp Baileys com simulacao humana e resolucao automatica do 9º digito.</p>
+    </div>
+
+    <div class="content-grid">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+            Nova Mensagem WhatsApp
+          </div>
+        </div>
+        <div class="card-body">
+          <div id="manual-send-alert" class="alert-box"></div>
+          <form id="manual-send-form">
+            <div class="form-group">
+              <label class="form-label" for="manual-phone">Telefone do Destinatário (com DDD)</label>
+              <input id="manual-phone" class="form-control tabular-nums" type="text" placeholder="Ex: (11) 99887-7665 ou 5511998877665" required>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="manual-type">Tipo de Mensagem</label>
+              <select id="manual-type" class="form-control">
+                <option value="text">Texto Direto (com simulação de digitação)</option>
+                <option value="audio_ptt">Áudio PTT / Nota de Voz (.ogg Opus)</option>
+                <option value="document">Documento Anexado (PDF)</option>
+              </select>
+            </div>
+
+            <div id="manual-text-group" class="form-group">
+              <label class="form-label" for="manual-message">Conteúdo da Mensagem (suporta Spintax e variáveis)</label>
+              <textarea id="manual-message" class="form-control" rows="4" placeholder="{Olá|Oi|Fala}! Segue sua mensagem imediata..."></textarea>
+            </div>
+
+            <div id="manual-media-group" class="form-group" style="display: none;">
+              <label class="form-label" for="manual-media-path">Caminho do Arquivo de Mídia (no servidor)</label>
+              <input id="manual-media-path" class="form-control" type="text" placeholder="Ex: data/media/audio_pitch.ogg ou data/media/entrega.pdf">
+            </div>
+
+            <div id="manual-doc-group" class="form-group" style="display: none;">
+              <label class="form-label" for="manual-file-name">Nome do Arquivo (Exibição no WhatsApp)</label>
+              <input id="manual-file-name" class="form-control" type="text" placeholder="Ex: Manual-Exclusivo.pdf">
+              <label class="form-label" for="manual-caption" style="margin-top: 8px;">Legenda do Documento (Opcional)</label>
+              <input id="manual-caption" class="form-control" type="text" placeholder="Legenda anexada ao documento">
+            </div>
+
+            <div class="form-group" style="display: flex; align-items: center; gap: 8px;">
+              <input type="checkbox" id="manual-skip-sim" style="accent-color: var(--accent-primary); width: 16px; height: 16px;">
+              <label for="manual-skip-sim" style="font-size: 13px; color: var(--text-secondary); cursor: pointer;">
+                Pular simulação de presença humana (disparo ultrarrápido)
+              </label>
+            </div>
+
+            <button type="submit" class="btn btn-primary" data-action="manual-send" data-id="btn-manual-send" style="width: 100%; justify-content: center;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="22" y1="2" x2="11" y2="13"></line>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+              </svg>
+              <span class="btn-text">Enviar Mensagem Agora</span>
+            </button>
+          </form>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <polyline points="12 6 12 12 16 14"></polyline>
+            </svg>
+            Status de Entrega em Tempo Real
+          </div>
+        </div>
+        <div class="card-body">
+          <div style="display: flex; flex-direction: column; gap: 14px; font-size: 13px;">
+            <div>
+              <span class="form-label">Último Envio Manual</span>
+              <div id="manual-status-summary" style="color: var(--text-muted);">Nenhum envio realizado nesta sessão.</div>
+            </div>
+            <div id="manual-details-box" style="display: none; background: var(--bg-primary); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px; font-size: 12px;">
+              <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+                <span style="color: var(--text-secondary);">Message ID:</span>
+                <code id="manual-res-msgid" class="tabular-nums">-</code>
+              </div>
+              <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+                <span style="color: var(--text-secondary);">JID Validado:</span>
+                <code id="manual-res-jid" class="tabular-nums">-</code>
+              </div>
+              <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+                <span style="color: var(--text-secondary);">Tempo de Despacho:</span>
+                <span id="manual-res-duration" class="tabular-nums" style="color: var(--status-success);">-</span>
+              </div>
+              <div style="display: flex; justify-content: space-between;">
+                <span style="color: var(--text-secondary);">Status:</span>
+                <span id="manual-res-status" class="badge badge-success">SENT</span>
+              </div>
+            </div>
+
+            <div style="padding-top: 10px; border-top: 1px solid var(--border-subtle);">
+              <span class="form-label">Histórico da Sessão</span>
+              <div class="table-responsive" style="max-height: 250px;">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Hora</th>
+                      <th>Destinatário</th>
+                      <th>Tipo</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="manual-history-body">
+                    <tr>
+                      <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 16px;">Sem envios ainda</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    function escapeHtml(str) {
+      if (!str) return "";
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      const typeSelect = document.getElementById("manual-type");
+      const textGroup = document.getElementById("manual-text-group");
+      const mediaGroup = document.getElementById("manual-media-group");
+      const docGroup = document.getElementById("manual-doc-group");
+
+      if (typeSelect) {
+        typeSelect.addEventListener("change", () => {
+          const t = typeSelect.value;
+          if (t === "text") {
+            if (textGroup) textGroup.style.display = "block";
+            if (mediaGroup) mediaGroup.style.display = "none";
+            if (docGroup) docGroup.style.display = "none";
+          } else if (t === "audio_ptt") {
+            if (textGroup) textGroup.style.display = "none";
+            if (mediaGroup) mediaGroup.style.display = "block";
+            if (docGroup) docGroup.style.display = "none";
+          } else if (t === "document") {
+            if (textGroup) textGroup.style.display = "none";
+            if (mediaGroup) mediaGroup.style.display = "block";
+            if (docGroup) docGroup.style.display = "block";
+          }
+        });
+      }
+
+      const manualHistory = [];
+      function renderManualHistory() {
+        const tbody = document.getElementById("manual-history-body");
+        if (!tbody) return;
+        if (manualHistory.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 16px;">Sem envios ainda</td></tr>';
+          return;
+        }
+        tbody.innerHTML = manualHistory.map(item => `
+          <tr>
+            <td class="tabular-nums">${escapeHtml(item.time)}</td>
+            <td class="tabular-nums">${escapeHtml(item.phone)}</td>
+            <td><code>${escapeHtml(item.type)}</code></td>
+            <td><span class="badge ${item.success ? 'badge-success' : 'badge-warning'}">${item.success ? 'SENT' : 'ERROR'}</span></td>
+          </tr>
+        `).join("");
+      }
+
+      const manualForm = document.getElementById("manual-send-form");
+      if (manualForm) {
+        manualForm.addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const alertBox = document.getElementById("manual-send-alert");
+          const submitBtn = manualForm.querySelector('button[type="submit"]');
+
+          const phone = document.getElementById("manual-phone").value.trim();
+          const type = document.getElementById("manual-type").value;
+          const message = document.getElementById("manual-message").value.trim();
+          const mediaPath = document.getElementById("manual-media-path").value.trim();
+          const fileName = document.getElementById("manual-file-name").value.trim();
+          const caption = document.getElementById("manual-caption").value.trim();
+          const skipSimulation = document.getElementById("manual-skip-sim").checked;
+
+          if (!phone || phone.replace(/\\D/g, "").length < 10) {
+            alertBox.className = "alert-box error";
+            alertBox.textContent = "Erro: informe um telefone valido com DDD (minimo 10 digitos).";
+            return;
+          }
+
+          if (type === "text" && !message) {
+            alertBox.className = "alert-box error";
+            alertBox.textContent = "Erro: digite o conteudo da mensagem de texto.";
+            return;
+          }
+
+          if ((type === "audio_ptt" || type === "document") && !mediaPath) {
+            alertBox.className = "alert-box error";
+            alertBox.textContent = "Erro: informe o caminho do arquivo de midia no servidor.";
+            return;
+          }
+
+          submitBtn.disabled = true;
+          submitBtn.innerHTML = '<span class="spinner"></span> <span>Enviando via WhatsApp...</span>';
+
+          const summaryDiv = document.getElementById("manual-status-summary");
+          if (summaryDiv) {
+            summaryDiv.textContent = "Enviando mensagem... Simulacao de presenca em andamento.";
+          }
+
+          const nowStr = new Date().toLocaleTimeString();
+
+          try {
+            const body = {
+              phone,
+              type,
+              message,
+              mediaPath,
+              fileName,
+              caption,
+              skipSimulation,
+            };
+
+            const res = await fetch("/api/messages/manual-send", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            });
+
+            const data = await res.json();
+            const detailsBox = document.getElementById("manual-details-box");
+
+            if (res.ok && data.success) {
+              alertBox.className = "alert-box success";
+              alertBox.textContent = `Mensagem enviada com sucesso! Message ID: ${data.messageId || 'OK'} (${data.durationMs}ms)`;
+
+              if (summaryDiv) {
+                summaryDiv.textContent = `Ultimo disparo concluido com sucesso para ${data.phone}`;
+              }
+
+              if (detailsBox) {
+                detailsBox.style.display = "block";
+                document.getElementById("manual-res-msgid").textContent = data.messageId || "N/A";
+                document.getElementById("manual-res-jid").textContent = data.jid || "N/A";
+                document.getElementById("manual-res-duration").textContent = `${data.durationMs}ms`;
+                const stBadge = document.getElementById("manual-res-status");
+                stBadge.className = "badge badge-success";
+                stBadge.textContent = "SENT";
+              }
+
+              manualHistory.unshift({
+                time: nowStr,
+                phone: data.phone,
+                type: data.type,
+                success: true,
+              });
+              renderManualHistory();
+            } else {
+              const errMsg = data.error || data.message || "Falha no envio da mensagem";
+              alertBox.className = "alert-box error";
+              alertBox.textContent = `Erro no envio: ${errMsg}`;
+
+              if (summaryDiv) {
+                summaryDiv.textContent = `Falha no envio para ${phone}: ${errMsg}`;
+              }
+
+              if (detailsBox) {
+                detailsBox.style.display = "block";
+                document.getElementById("manual-res-msgid").textContent = "-";
+                document.getElementById("manual-res-jid").textContent = data.jid || "-";
+                document.getElementById("manual-res-duration").textContent = data.durationMs ? `${data.durationMs}ms` : "-";
+                const stBadge = document.getElementById("manual-res-status");
+                stBadge.className = "badge badge-warning";
+                stBadge.textContent = "FAILED";
+              }
+
+              manualHistory.unshift({
+                time: nowStr,
+                phone,
+                type,
+                success: false,
+              });
+              renderManualHistory();
+            }
+          } catch (fetchErr) {
+            alertBox.className = "alert-box error";
+            alertBox.textContent = `Erro de conexao com o servidor: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`;
+            if (summaryDiv) {
+              summaryDiv.textContent = "Erro de rede ao conectar com o endpoint da API.";
+            }
+          } finally {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = `
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="22" y1="2" x2="11" y2="13"></line>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+              </svg>
+              <span class="btn-text">Enviar Mensagem Agora</span>
+            `;
+          }
+        });
+      }
+    });
+  </script>
+</body>
+</html>

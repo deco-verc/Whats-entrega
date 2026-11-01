@@ -398,4 +398,30 @@ describe("Modulo de Disparo Rapido Manual (POST /api/messages/manual-send)", () 
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
+
+  test("deve servir public/manual-send.html com status 200 e tipo text/html", async () => {
+    const app = createWebhookApp();
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const port = (server.address() as any).port;
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/manual-send.html`);
+      assert.equal(res.status, 200);
+      assert.ok(res.headers.get("content-type")?.includes("text/html"));
+      const html = await res.text();
+      assert.ok(html.includes("Disparo Rapido Manual"));
+      assert.ok(html.includes("manual-send-form"));
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  test("deve exportar router em src/routes/manual-send.ts com suporte a createManualSendRouter", async () => {
+    const { createManualSendRouter, handleManualSend } = await import("../src/routes/manual-send.js");
+    assert.equal(typeof createManualSendRouter, "function");
+    assert.equal(typeof handleManualSend, "function");
+    const router = createManualSendRouter({ sock: mockSocket });
+    assert.ok(router);
+  });
 });
