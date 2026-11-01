@@ -663,6 +663,213 @@ export class AuditLogRepository {
 }
 
 // ============================================================================
+// Repositorio de Templates de Mensagens (TemplateRepository)
+// ============================================================================
+
+export class TemplateRepository {
+  private readonly db: Database.Database;
+  private readonly stmtInsert: Database.Statement<[string, string, string, string, string | null]>;
+  private readonly stmtFindById: Database.Statement<[string]>;
+  private readonly stmtFindByName: Database.Statement<[string]>;
+  private readonly stmtFindAll: Database.Statement<[]>;
+  private readonly stmtDelete: Database.Statement<[string]>;
+
+  constructor(db: Database.Database = getDatabase()) {
+    this.db = db;
+    this.stmtInsert = db.prepare<[string, string, string, string, string | null]>(`
+      INSERT INTO message_templates (id, name, content, tags_json, media_path, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+    `);
+    this.stmtFindById = db.prepare<[string]>(`
+      SELECT * FROM message_templates WHERE id = ?
+    `);
+    this.stmtFindByName = db.prepare<[string]>(`
+      SELECT * FROM message_templates WHERE name = ?
+    `);
+    this.stmtFindAll = db.prepare<[]>(`
+      SELECT * FROM message_templates ORDER BY created_at DESC, rowid DESC
+    `);
+    this.stmtDelete = db.prepare<[string]>(`
+      DELETE FROM message_templates WHERE id = ?
+    `);
+  }
+
+  public create(input: CreateTemplateInput): MessageTemplate {
+    const id = input.id || `tpl_${randomUUID()}`;
+    const name = input.name.trim();
+    const content = input.content.trim();
+    const tagsJson = Array.isArray(input.tags)
+      ? JSON.stringify(input.tags)
+      : typeof input.tags === "string"
+      ? (input.tags.startsWith("[") ? input.tags : JSON.stringify(input.tags.split(",").map((t) => t.trim()).filter(Boolean)))
+      : JSON.stringify(this.extractTags(content));
+    const mediaPath = input.media_path ? input.media_path.trim() : null;
+
+    this.stmtInsert.run(id, name, content, tagsJson, mediaPath);
+    return this.findById(id)!;
+  }
+
+  public findById(id: string): MessageTemplate | null {
+    const row = this.stmtFindById.get(id) as MessageTemplate | undefined;
+    return row ?? null;
+  }
+
+  public findByName(name: string): MessageTemplate | null {
+    const row = this.stmtFindByName.get(name) as MessageTemplate | undefined;
+    return row ?? null;
+  }
+
+  public findAll(): MessageTemplate[] {
+    return this.stmtFindAll.all() as MessageTemplate[];
+  }
+
+  public update(id: string, input: UpdateTemplateInput): MessageTemplate | null {
+    const existing = this.findById(id);
+    if (!existing) return null;
+
+    const name = input.name !== undefined ? input.name.trim() : existing.name;
+    const content = input.content !== undefined ? input.content.trim() : existing.content;
+    const tagsJson = input.tags !== undefined
+      ? (Array.isArray(input.tags)
+          ? JSON.stringify(input.tags)
+          : typeof input.tags === "string"
+          ? (input.tags.startsWith("[") ? input.tags : JSON.stringify(input.tags.split(",").map((t) => t.trim()).filter(Boolean)))
+          : JSON.stringify(this.extractTags(content)))
+      : (input.content !== undefined ? JSON.stringify(this.extractTags(content)) : existing.tags_json);
+    const mediaPath = input.media_path !== undefined
+      ? (input.media_path ? input.media_path.trim() : null)
+      : existing.media_path;
+
+    this.db.prepare(`
+      UPDATE message_templates
+      SET name = ?, content = ?, tags_json = ?, media_path = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `).run(name, content, tagsJson, mediaPath, id);
+
+    return this.findById(id);
+  }
+
+  public delete(id: string): boolean {
+    const result = this.stmtDelete.run(id);
+    return result.changes > 0;
+  }
+
+  public extractTags(content: string): string[] {
+    const tagMatches = content.match(/\{([a-zA-Z0-9_]+)\}/g) || [];
+    const doubleMatches = content.match(/\{\{([a-zA-Z0-9_]+)\}\}/g) || [];
+    const set = new Set<string>();
+    for (const m of tagMatches) {
+      const clean = m.slice(1, -1);
+      if (!clean.includes("|")) set.add(clean);
+    }
+    for (const m of doubleMatches) {
+      const clean = m.slice(2, -2);
+      if (!clean.includes("|")) set.add(clean);
+    }
+    return Array.from(set);
+  }
+
+  public interpolate(
+    contentOrTemplate: string | MessageTemplate,
+    variables: Record<string, string | number | undefined | null> = {}
+  ): string {
+    const rawContent = typeof contentOrTemplate === "string" ? contentOrTemplate : contentOrTemplate.content;
+    let resolved = rawContent;
+
+    // 1. Interpola tags {{tag}} e {tag}
+    for (const [key, value] of Object.entries(variables)) {
+      const valStr = value !== undefined && value !== null ? String(value) : "";
+      resolved = resolved.replace(new RegExp(`\\{\\{${key}\\}\\}`, "g"), valStr);
+      resolved = resolved.replace(new RegExp(`\\{${key}\\}`, "g"), valStr);
+    }
+
+    // 2. Resolve Spintax: {opcao1|opcao2|opcao3}
+    const spintaxRegex = /\{([^{}]+)\}/;
+    let loopGuard = 0;
+    while (loopGuard++ < 100) {
+      const match = spintaxRegex.exec(resolved);
+      if (!match) break;
+      if (match[1].includes("|")) {
+        const choices = match[1].split("|");
+        const chosen = choices[Math.floor(Math.random() * choices.length)];
+        resolved = resolved.slice(0, match.index) + chosen + resolved.slice(match.index + match[0].length);
+      } else {
+        break;
+      }
+    }
+
+    return resolved;
+  }
+
+  public validateSpintax(content: string): { valid: boolean; error?: string } {
+    let openCount = 0;
+    for (let i = 0; i < content.length; i++) {
+      if (content[i] === "{") openCount++;
+      if (content[i] === "}") {
+        openCount--;
+        if (openCount < 0) {
+          return { valid: false, error: `Caractere '}' inesperado na posicao ${i}.` };
+        }
+      }
+    }
+    if (openCount > 0) {
+      return { valid: false, error: "Existem chaves '{' nao fechadas no template." };
+    }
+    return { valid: true };
+  }
+
+  public seedIfEmpty(force = false): number {
+    const existing = this.findAll();
+    if (!force && existing.length > 0) return 0;
+
+    const initialTemplates: CreateTemplateInput[] = [
+      {
+        id: "tpl_welcome_delivery",
+        name: "Boas-vindas e Entrega Imediata",
+        content: "{Ola|Oi|Fala}, {first_name}! Tudo bem?\n\nSeu pedido do produto {product_name} foi confirmado com sucesso!\n\nSegue em anexo o material de acesso exclusivo. Qualquer duvida estou por aqui!",
+        tags: ["first_name", "product_name"],
+        media_path: "data/media/entrega.pdf",
+      },
+      {
+        id: "tpl_pix_recovery",
+        name: "Recuperacao de PIX Pendente",
+        content: "{Ola|Oi}, {first_name}!\n\nNotei que voce gerou o pedido do {product_name}, mas o PIX ainda esta pendente.\n\nSeu codigo copia e cola:\n{pix_code}\n\nGaranta sua vaga antes que o link expire!",
+        tags: ["first_name", "product_name", "pix_code"],
+      },
+      {
+        id: "tpl_upsell_pitch",
+        name: "Pitch de Aceleracao (Upsell)",
+        content: "{E ai|Fala}, {first_name}! Parabens por garantir o {product_name}!\n\nTenho uma condicao especial exclusiva para a oferta {offer_name}:\n{checkout_url}\n\nOuça este audio rapido que gravei para voce!",
+        tags: ["first_name", "product_name", "offer_name", "checkout_url"],
+        media_path: "data/media/audio_pitch.ogg",
+      },
+      {
+        id: "tpl_downsell_offer",
+        name: "Oferta Especial Downsell",
+        content: "{Ola|Oi}, {first_name}! Entendo que o valor do upgrade possa ter ficado acima do planejado.\n\nPor isso liberei esta versao essencial com condicao imperdivel:\n{checkout_url}\n\nAproveite agora!",
+        tags: ["first_name", "checkout_url"],
+      },
+      {
+        id: "tpl_support_followup",
+        name: "Suporte e Acompanhamento",
+        content: "{Ola|Oi|Tudo bem}, {first_name}!\n\nPassando para saber se conseguiu abrir seu {product_name} e se precisa de alguma ajuda.\n\nConte comigo!",
+        tags: ["first_name", "product_name"],
+      },
+    ];
+
+    let inserted = 0;
+    for (const tpl of initialTemplates) {
+      if (!this.findById(tpl.id || "")) {
+        this.create(tpl);
+        inserted++;
+      }
+    }
+
+    return inserted;
+  }
+}
+
+// ============================================================================
 // Helper de Transacoes e Fabrica de Repositorios
 // ============================================================================
 
@@ -672,6 +879,7 @@ export interface Repositories {
   readonly orders: OrderRepository;
   readonly messageQueue: MessageQueueRepository;
   readonly auditLogs: AuditLogRepository;
+  readonly templates: TemplateRepository;
   readonly transaction: <T>(fn: () => T) => T;
 }
 
@@ -682,6 +890,7 @@ export function createRepositories(db: Database.Database = getDatabase()): Repos
     orders: new OrderRepository(db),
     messageQueue: new MessageQueueRepository(db),
     auditLogs: new AuditLogRepository(db),
+    templates: new TemplateRepository(db),
     transaction: <T>(fn: () => T): T => db.transaction(fn)(),
   };
 }
@@ -695,5 +904,6 @@ export const customerRepository = repositories.customers;
 export const orderRepository = repositories.orders;
 export const messageQueueRepository = repositories.messageQueue;
 export const auditLogRepository = repositories.auditLogs;
+export const templateRepository = repositories.templates;
 
 export default repositories;

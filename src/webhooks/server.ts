@@ -6,6 +6,8 @@ import { env, validatePort } from "../config/env.js";
 import { getDatabase } from "../database/connection.js";
 import type { WASocket } from "@whiskeysockets/baileys";
 import { handleManualSend } from "../routes/manual-send.js";
+import { createTemplatesRouter } from "../routes/templates.js";
+import { TemplateRepository } from "../database/repositories.js";
 import { getWhatsAppConnectionStatus } from "../whatsapp/socket.js";
 
 
@@ -27,6 +29,7 @@ export interface WebhookServerOptions {
   readonly repositories?: ProcessWebhookRepositories;
   readonly publicDir?: string;
   readonly sock?: WASocket | null | (() => WASocket | null);
+  readonly templateRepo?: TemplateRepository;
 }
 
 /**
@@ -168,6 +171,19 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
   app.post("/api/messages/manual-send", (req: Request, res: Response): Promise<void> => {
     return handleManualSend(req, res, options);
   });
+
+  // Gestao de Templates de Mensagens com Tags Dinamicas e Spintax (src/routes/templates.ts)
+  const effectiveTemplateRepo = options.templateRepo ?? options.repositories?.templateRepo;
+  try {
+    const tplRepo = effectiveTemplateRepo ?? (getDatabase()?.open ? new TemplateRepository(getDatabase()) : undefined);
+    tplRepo?.seedIfEmpty();
+  } catch {
+    // Ignora falha de seed em caso de banco isolado
+  }
+  app.use(
+    "/api/templates",
+    createTemplatesRouter({ templateRepo: effectiveTemplateRepo })
+  );
 
   // Endpoint receptor do Webhook da Cakto
   const handleCaktoWebhook = async (req: Request, res: Response): Promise<void> => {

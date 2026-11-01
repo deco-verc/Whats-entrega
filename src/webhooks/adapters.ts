@@ -7,6 +7,7 @@ import {
   CustomerRepository,
   OrderRepository,
   AuditLogRepository,
+  TemplateRepository,
   type Customer,
   type Order,
 } from "../database/repositories.js";
@@ -263,6 +264,7 @@ export interface ProcessWebhookRepositories {
   readonly customerRepo?: CustomerRepository;
   readonly orderRepo?: OrderRepository;
   readonly auditRepo?: AuditLogRepository;
+  readonly templateRepo?: TemplateRepository;
 }
 
 /**
