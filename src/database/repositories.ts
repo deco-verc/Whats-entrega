@@ -91,6 +91,31 @@ export interface AuditLog {
   readonly created_at: string;
 }
 
+export interface MessageTemplate {
+  readonly id: string;
+  readonly name: string;
+  readonly content: string;
+  readonly tags_json: string;
+  readonly media_path: string | null;
+  readonly created_at: string;
+  readonly updated_at: string;
+}
+
+export interface CreateTemplateInput {
+  readonly id?: string;
+  readonly name: string;
+  readonly content: string;
+  readonly tags?: readonly string[] | string;
+  readonly media_path?: string | null;
+}
+
+export interface UpdateTemplateInput {
+  readonly name?: string;
+  readonly content?: string;
+  readonly tags?: readonly string[] | string;
+  readonly media_path?: string | null;
+}
+
 // ============================================================================
 // Utilitarios de Normalizacao
 // ============================================================================

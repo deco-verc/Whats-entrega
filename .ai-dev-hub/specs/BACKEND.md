@@ -129,12 +129,19 @@ OPENAI_API_KEY=mock_key
 
 ## CONTRATOS REAIS IMPLEMENTADOS EM DISCO (VERIFICADOS)
 *Sincronização autônoma realizada pelo DecoHUB a partir do código-fonte em disco:*
-- **Tabelas Físicas SQLite Identificadas:** `audit_logs`, `customers`, `message_queue`, `orders`, `system_settings`
+- **Tabelas Físicas SQLite Identificadas:** `audit_logs`, `customers`, `message_queue`, `message_templates`, `orders`, `system_settings`
 - **Rotas REST Físicas Detectadas:**
+  - `POST /`
   - `GET /`
+  - `GET /api/customers`
   - `GET /api/health`
+  - `POST /api/messages/manual-send`
+  - `GET /api/orders`
+  - `GET /api/queue`
+  - `GET /api/settings`
+  - `POST /api/settings`
   - `GET /api/status`
   - `POST /api/webhook/cakto`
   - `GET /health`
   - `POST /webhook/cakto`
-- **Data/Hora da Última Verificação:** 2026-11-01T00:56:25.649Z
+- **Data/Hora da Última Verificação:** 2026-11-01T23:00:59.657Z

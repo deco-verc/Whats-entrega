@@ -15,3 +15,8 @@
 - **Estratégia que funcionou (APLICAR):** Aprovado após verificação objetiva do IndependentEvaluator (testes e arquivos comprovados no disco).
 - **Teste de regressão:** `test/config.test.ts`
 - **Ocorrências:** 4 | **Atualizado em:** 2026-10-31T19:58:41.789Z
+
+### [EM ABERTO] [BUILD_AND_TEST/PERSISTENT_CODE_DEFECT] Revisão reprovada em "Módulo de Disparo Rápido Manual (UI + Endpoint direto de Envio)" (Tentativa 1/3)
+- **Causa-raiz confirmada:** Revisão reprovada por evidência insuficiente: NEEDS_EVIDENCE: O Review independente reprovou a aprovação (REJECTED): Reprovado no Review independente: Relatório do Worker inconsistente com o código real: arquivo declarado "src/routes/manual-send.ts" não existe no disco.; Relatório do Worker inconsistente com o código real: arquivo declarado "public/manual-send.html" não existe no disco.
+- **Estratégia que falhou (EVITAR):** Resultado recuperado e comprovado no disco pelo Evaluator
+- **Ocorrências:** 1 | **Atualizado em:** 2026-11-01T20:21:48.909Z

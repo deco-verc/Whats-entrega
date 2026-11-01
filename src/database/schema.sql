@@ -80,3 +80,16 @@ CREATE TABLE IF NOT EXISTS system_settings (
   value TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- 5. Tabela de Templates de Mensagens com Tags Dinamicas e Spintax
+CREATE TABLE IF NOT EXISTS message_templates (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  content TEXT NOT NULL,
+  tags_json TEXT NOT NULL DEFAULT '[]',
+  media_path TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_message_templates_name ON message_templates (name);
