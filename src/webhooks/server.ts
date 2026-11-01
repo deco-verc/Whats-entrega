@@ -3,6 +3,8 @@ import * as path from "node:path";
 import * as http from "node:http";
 import express, { type Request, type Response, type NextFunction, type Application } from "express";
 import { env, validatePort } from "../config/env.js";
+import { getDatabase } from "../database/connection.js";
+import { getWhatsAppConnectionStatus } from "../whatsapp/socket.js";
 import {
   validateCaktoSecret,
   normalizeCaktoWebhook,
@@ -47,7 +49,111 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
 
   app.get("/api/health", handleHealth);
   app.get("/health", handleHealth);
-  app.get("/api/status", handleHealth);
+  // Status detalhado do sistema, WhatsApp e contadores
+  app.get("/api/status", (_req: Request, res: Response) => {
+    let customersCount = 0;
+    let ordersCount = 0;
+    let pendingJobsCount = 0;
+    let sentJobsCount = 0;
+
+    try {
+      const db = getDatabase();
+      if (db && db.open) {
+        const cRow = db.prepare("SELECT COUNT(*) as count FROM customers").get() as { count: number } | undefined;
+        const oRow = db.prepare("SELECT COUNT(*) as count FROM orders").get() as { count: number } | undefined;
+        const pRow = db.prepare("SELECT COUNT(*) as count FROM message_queue WHERE status = 'PENDING'").get() as { count: number } | undefined;
+        const sRow = db.prepare("SELECT COUNT(*) as count FROM message_queue WHERE status = 'SENT'").get() as { count: number } | undefined;
+        customersCount = cRow?.count ?? 0;
+        ordersCount = oRow?.count ?? 0;
+        pendingJobsCount = pRow?.count ?? 0;
+        sentJobsCount = sRow?.count ?? 0;
+      }
+    } catch {
+      // Ignora falha de contagem inicial se banco ainda nao inicializado
+    }
+
+    res.status(200).json({
+      status: "ok",
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
+      database: "connected",
+      whatsapp: getWhatsAppConnectionStatus(),
+      port: options.port ?? (process.env.PORT ? Number(process.env.PORT) : env.port),
+      stats: {
+        total_customers: customersCount,
+        total_orders: ordersCount,
+        pending_jobs: pendingJobsCount,
+        sent_jobs: sentJobsCount,
+      },
+    });
+  });
+
+  app.get("/api/queue", (_req: Request, res: Response) => {
+    try {
+      const db = getDatabase();
+      const jobs = db.prepare(
+        "SELECT id, customer_id, phone, message_type, content, scheduled_at, status, attempts, last_error, created_at FROM message_queue ORDER BY scheduled_at DESC LIMIT 50"
+      ).all();
+      res.status(200).json({ jobs });
+    } catch (err: unknown) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.get("/api/orders", (_req: Request, res: Response) => {
+    try {
+      const db = getDatabase();
+      const orders = db.prepare(
+        "SELECT id, transaction_id, customer_id, product_id, offer_id, event_type, status, paid_at, created_at FROM orders ORDER BY created_at DESC LIMIT 50"
+      ).all();
+      res.status(200).json({ orders });
+    } catch (err: unknown) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.get("/api/customers", (_req: Request, res: Response) => {
+    try {
+      const db = getDatabase();
+      const customers = db.prepare(
+        "SELECT id, phone, name, email, current_state, jid, created_at FROM customers ORDER BY created_at DESC LIMIT 50"
+      ).all();
+      res.status(200).json({ customers });
+    } catch (err: unknown) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.get("/api/settings", (_req: Request, res: Response) => {
+    try {
+      const db = getDatabase();
+      const settings = db.prepare("SELECT key, value, updated_at FROM system_settings").all();
+      res.status(200).json({ settings });
+    } catch (err: unknown) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.post("/api/settings", (req: Request, res: Response) => {
+    try {
+      const { key, value } = req.body || {};
+      if (!key || typeof key !== "string" || key.trim().length === 0) {
+        res.status(400).json({ error: "ValidationError", message: "Campo 'key' e obrigatorio." });
+        return;
+      }
+      if (value === undefined || value === null) {
+        res.status(400).json({ error: "ValidationError", message: "Campo 'value' e obrigatorio." });
+        return;
+      }
+      const db = getDatabase();
+      db.prepare(
+        "INSERT INTO system_settings (key, value, updated_at) VALUES (?, ?, datetime('now')) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+      ).run(key.trim(), String(value));
+      res.status(200).json({ success: true, key: key.trim(), value: String(value) });
+    } catch (err: unknown) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
 
   // Endpoint receptor do Webhook da Cakto
   const handleCaktoWebhook = async (req: Request, res: Response): Promise<void> => {
@@ -190,9 +296,9 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
 export function startWebhookServer(options: WebhookServerOptions = {}): Promise<http.Server> {
   return new Promise((resolve, reject) => {
     try {
-      const portCandidate = options.port ?? env.port;
+      const portCandidate = options.port ?? (process.env.PORT ? Number(process.env.PORT) : env.port);
       const port = validatePort(portCandidate);
-      const host = options.host ?? env.host;
+      const host = options.host ?? process.env.HOST ?? env.host;
 
       const app = createWebhookApp(options);
       const server = http.createServer(app);

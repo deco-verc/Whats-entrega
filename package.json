@@ -2,13 +2,13 @@
   "name": "whatsapp-entrega",
   "version": "1.0.0",
   "description": "Sistema monolitico modular de automacao Direct Response no WhatsApp com Baileys, SQLite e Cakto",
-  "main": "dist/src/config/env.js",
+  "main": "dist/src/index.js",
   "type": "module",
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "start": "node dist/src/config/env.js",
-    "dev": "tsx watch src/config/env.ts",
+    "start": "node dist/src/index.js",
+    "dev": "tsx watch src/index.ts",
     "test": "tsx --test test/**/*.test.ts"
   },
   "keywords": [

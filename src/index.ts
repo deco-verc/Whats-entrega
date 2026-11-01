@@ -1,5 +1,7 @@
 import * as http from "node:http";
-import { env, ensureDataDirectoriesExist } from "./config/env.js";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+import { env, validatePort, ensureDataDirectoriesExist } from "./config/env.js";
 import { initDatabase, closeDatabase } from "./database/connection.js";
 import {
   initWhatsAppSocket,
@@ -79,15 +81,19 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<AppInst
     }
   }
 
+  const portCandidate = options.port ?? (process.env.PORT ? Number(process.env.PORT) : env.port);
+  const effectivePort = validatePort(portCandidate);
+  const effectiveHost = options.host ?? process.env.HOST ?? env.host;
+
   // 2. Inicializacao do Servidor HTTP de Webhooks Cakto
   let httpServer: http.Server | null = null;
   if (shouldStartHttp) {
-    console.log(`[System] Inicializando servidor HTTP de Webhooks na porta ${options.port ?? env.port}...`);
+    console.log(`[System] Inicializando servidor HTTP de Webhooks na porta ${effectivePort}...`);
     httpServer = await startWebhookServer({
-      port: options.port ?? env.port,
-      host: options.host ?? env.host,
+      port: effectivePort,
+      host: effectiveHost,
     });
-    console.log(`[System] Servidor HTTP ativo na porta ${options.port ?? env.port}`);
+    console.log(`[System] Servidor HTTP ativo na porta ${effectivePort}`);
   } else {
     // Servidor dummy para instancias de teste que nao sobem porta real
     httpServer = http.createServer((_req, res) => res.end("ok"));
@@ -148,18 +154,37 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<AppInst
 // Execucao Direta do Entrypoint
 // ============================================================================
 
-const isDirectRun =
-  process.argv[1] &&
-  (process.argv[1].endsWith("src/index.ts") ||
-    process.argv[1].endsWith("src/index.js") ||
-    process.argv[1].endsWith("dist/src/index.js"));
+export function isDirectExecution(argv1?: string, moduleUrl?: string): boolean {
+  if (!argv1) return false;
+  try {
+    if (moduleUrl) {
+      const currentFilePath = fileURLToPath(moduleUrl);
+      if (path.resolve(argv1) === path.resolve(currentFilePath)) {
+        return true;
+      }
+    }
+  } catch {
+    // Parser fallback
+  }
+
+  const normalized = path.resolve(argv1).replace(/\\/g, "/");
+  return (
+    normalized.endsWith("/src/index.ts") ||
+    normalized.endsWith("/src/index.js") ||
+    normalized.endsWith("/dist/src/index.js") ||
+    normalized.endsWith("/dist/index.js")
+  );
+}
+
+const isDirectRun = isDirectExecution(process.argv[1], import.meta.url);
 
 if (isDirectRun) {
   bootstrap()
     .then((instance) => {
+      const activePort = process.env.PORT ? validatePort(process.env.PORT) : env.port;
       console.log("==================================================");
       console.log("WhatsappEntrega MVP iniciado com sucesso!");
-      console.log(`Porta HTTP: ${env.port}`);
+      console.log(`Porta HTTP: ${activePort}`);
       console.log(`Status WhatsApp: ${getWhatsAppConnectionStatus()}`);
       console.log("==================================================");
 
