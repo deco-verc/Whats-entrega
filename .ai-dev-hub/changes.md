@@ -1,5 +1,5 @@
 # Histórico de Arquivos Criados/Alterados — WhatsappEntrega
-*Atualizado em: 2026-10-31T23:58:00.000Z | Arquivos rastreados: 14*
+*Atualizado em: 2026-11-01T00:44:11.611Z | Arquivos rastreados: 13*
 
 - `package.json`
 - `tsconfig.json`
@@ -14,4 +14,3 @@
 - `src/webhooks/server.ts`
 - `src/webhooks/adapters.ts`
 - `src/engine/state-machine.ts`
-- `test/state-machine.test.ts`

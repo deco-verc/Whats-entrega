@@ -1,0 +1,45 @@
+# Caddyfile - Reverse Proxy com SSL/TLS Automatico para Google Cloud VPS
+# WhatsappEntrega - Direcionamento seguro para a aplicacao Node.js
+
+{
+  admin off
+  email contato@seu-dominio.com.br
+}
+
+# Subdominio oficial do webhook Cakto e Dashboard
+webhook.seu-dominio.com.br, api.seu-dominio.com.br {
+  # Redirecionamento reverso para a aplicacao Node.js na porta interna 4000
+  reverse_proxy localhost:4000 {
+    header_up Host {host}
+    header_up X-Real-IP {remote_host}
+    header_up X-Forwarded-For {remote_host}
+    header_up X-Forwarded-Proto {scheme}
+
+    # Timeouts resilientes para conexoes longas
+    transport http {
+      keepalive 30s
+      compression off
+    }
+  }
+
+  # Compressao de respostas estaticas
+  encode zstd gzip
+
+  # Headers de Seguranca Corporativos (AppSec Standard)
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "DENY"
+    Referrer-Policy "strict-origin-when-cross-origin"
+    -Server
+  }
+
+  # Registro de logs estruturados em JSON
+  log {
+    output file /var/log/caddy/access.log {
+      roll_size 50mb
+      roll_keep 5
+    }
+    format json
+  }
+}

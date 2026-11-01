@@ -1,14 +1,15 @@
-# Gerenciamento de Tarefas
+# Kanban de Tarefas Autônomas — WhatsappEntrega
+*Atualizado em: 2026-11-01T00:44:11.611Z | Total: 6 tarefas (5 concluídas)*
 
-## Pendente
-- [ ] **Worker de Fila Anti-Banimento com Spintax, Entrypoint Unificado e Infraestrutura GCP VPS** `[MVP]`
-
-## Fazendo
-- [ ] [/] **Máquina de Estados Híbrida do Funil de Vendas e Recuperação por Micro-Comprometimento** `[MVP - in_review]`
-
-## Concluído
+## Concluído (5)
 - [x] **Configuração Base, Variáveis de Ambiente e Catálogo de Produtos** `[MVP]`
 - [x] **Camada de Banco de Dados SQLite em Modo WAL, Schema DDL e Repositórios Transacionais** `[MVP]`
 - [x] **Motor WhatsApp Baileys, JID Resolver do 9º Dígito e Dispatcher com Simulação Humana e PTT** `[MVP]`
 - [x] **Servidor HTTP de Webhooks Cakto, Validação de Secret e Adapters de Normalização** `[MVP]`
-- [x] Máquina de Estados Híbrida do Funil de Vendas e Recuperação por Micro-Comprometimento
+- [x] **Máquina de Estados Híbrida do Funil de Vendas e Recuperação por Micro-Comprometimento** `[MVP]`
+
+## Fazendo (1)
+- [/] **Worker de Fila Anti-Banimento com Spintax, Entrypoint Unificado e Infraestrutura GCP VPS** `[MVP - in_progress]`
+
+## Pendente (0)
+_Todas as tarefas foram concluídas_
