@@ -92,6 +92,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<AppInst
     httpServer = await startWebhookServer({
       port: effectivePort,
       host: effectiveHost,
+      sock: () => getWhatsAppSocket(),
     });
     console.log(`[System] Servidor HTTP ativo na porta ${effectivePort}`);
   } else {
