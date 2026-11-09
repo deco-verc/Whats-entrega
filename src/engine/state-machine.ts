@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { env } from "../config/env.js";
@@ -15,6 +16,7 @@ import {
   type Customer,
   type Order,
   type QueueJob,
+  type MessageTemplate,
 } from "../database/repositories.js";
 import {
   resolveBrazilianPhoneCandidates,
@@ -113,9 +115,22 @@ function extractFirstName(name: string): string {
   return parts[0] || "Cliente";
 }
 
-function resolveMediaFullPath(fileName?: string): string | null {
-  if (!fileName) return null;
-  return path.join(env.paths.mediaDir, fileName);
+function resolveMediaFullPath(fileNameOrPath?: string | null): string | null {
+  if (!fileNameOrPath) return null;
+  if (path.isAbsolute(fileNameOrPath)) return fileNameOrPath;
+  if (
+    fileNameOrPath.startsWith("data/") ||
+    fileNameOrPath.startsWith("data\\") ||
+    fileNameOrPath.includes("/") ||
+    fileNameOrPath.includes("\\")
+  ) {
+    const cwdPath = path.resolve(process.cwd(), fileNameOrPath);
+    if (fs.existsSync(cwdPath)) return cwdPath;
+    const basename = path.basename(fileNameOrPath);
+    const inMedia = path.join(env.paths.mediaDir, basename);
+    return fs.existsSync(inMedia) ? inMedia : cwdPath;
+  }
+  return path.join(env.paths.mediaDir, fileNameOrPath);
 }
 
 // ============================================================================
@@ -127,6 +142,64 @@ export class FunnelStateMachine {
 
   constructor(repos: Repositories = defaultRepositories) {
     this.repos = repos;
+  }
+
+  /**
+   * Consulta o TemplateRepository por slug ou nome do template
+   */
+  public getTemplate(stepKey: string, alternateKeys: string[] = []): MessageTemplate | null {
+    if (!this.repos?.templates) return null;
+    const candidates = [stepKey, ...alternateKeys];
+    for (const key of candidates) {
+      try {
+        const byId = this.repos.templates.findById(key);
+        if (byId) return byId;
+        const byName = this.repos.templates.findByName(key);
+        if (byName) return byName;
+      } catch {
+        // Ignora erro se tabela nao existir no banco isolado
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Monta dicionario completo de tags em Portugues e Ingles para interpolacao e Spintax
+   */
+  public buildTemplateVariables(data: {
+    name?: string | null;
+    firstName?: string | null;
+    productName?: string | null;
+    checkoutUrl?: string | null;
+    pixCode?: string | null;
+    extra?: Record<string, string>;
+  }): Record<string, string> {
+    const rawName = data.name || data.firstName || "Cliente";
+    const firstName = data.firstName || extractFirstName(rawName);
+    const prodName = data.productName || "";
+    const checkout = data.checkoutUrl || "";
+    const pix = data.pixCode || "";
+
+    const vars: Record<string, string> = {
+      // Tags em Portugues
+      nome: rawName,
+      primeiro_nome: firstName,
+      produto: prodName,
+      link_pagamento: checkout,
+      pix_copia_cola: pix,
+      link_acesso: checkout || "https://painel.aluno.com",
+      link_checkout: checkout,
+      // Tags em Ingles
+      name: rawName,
+      first_name: firstName,
+      product_name: prodName,
+      checkout_url: checkout,
+      pix_code: pix,
+      access_link: checkout || "https://painel.aluno.com",
+      ...(data.extra || {}),
+    };
+
+    return vars;
   }
 
   /**
