@@ -122,6 +122,87 @@ export function resolvePaths(): StoragePaths {
   };
 }
 
+export function ensurePlaceholderMediaExist(mediaDir: string = env.paths.mediaDir): void {
+  if (!fs.existsSync(mediaDir)) {
+    fs.mkdirSync(mediaDir, { recursive: true });
+  }
+
+  const dummyPdf = "%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\nxref\n0 4\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \ntrailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n190\n%%EOF\n";
+  const dummyOgg = Buffer.from([
+    0x4f, 0x67, 0x67, 0x53, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x13,
+    0x4f, 0x70, 0x75, 0x73, 0x48, 0x65, 0x61, 0x64, 0x01, 0x01, 0x00, 0x00,
+    0x80, 0xbb, 0x00, 0x00, 0x00, 0x00, 0x00,
+  ]);
+
+  const pdfFiles = [
+    "guia_definitivo_alta_conversao.pdf",
+    "entrega.pdf",
+    "pack_templates_acelerador.pdf",
+    "masterclass_escala_acesso.pdf",
+    "pack_templates_essenciais.pdf",
+  ];
+
+  const oggFiles = [
+    "pitch_upsell_1.ogg",
+    "pitch_upsell_2.ogg",
+    "pitch_downsell.ogg",
+    "audio_pitch.ogg",
+  ];
+
+  for (const fileName of pdfFiles) {
+    const fullPath = path.join(mediaDir, fileName);
+    if (!fs.existsSync(fullPath)) {
+      try {
+        fs.writeFileSync(fullPath, dummyPdf, "utf-8");
+      } catch {
+        // Ignora erro se nao puder gravar
+      }
+    }
+  }
+
+  for (const fileName of oggFiles) {
+    const fullPath = path.join(mediaDir, fileName);
+    if (!fs.existsSync(fullPath)) {
+      try {
+        fs.writeFileSync(fullPath, dummyOgg);
+      } catch {
+        // Ignora erro se nao puder gravar
+      }
+    }
+  }
+}
+
+export function ensureEnvExampleExists(): void {
+  const envExamplePath = path.resolve(process.cwd(), ".env.example");
+  if (!fs.existsSync(envExamplePath)) {
+    const content = `# Servidor HTTP e Ambiente
+PORT=4000
+HOST=0.0.0.0
+NODE_ENV=development
+LOG_LEVEL=info
+
+# Seguranca e Integracao Cakto
+CAKTO_WEBHOOK_SECRET=dev_cakto_webhook_secret
+
+# WhatsApp Baileys Conexao
+WHATSAPP_PAIRING_PHONE=5511999999999
+
+# Diretorios de Armazenamento Local
+DATA_DIR=./data
+AUTH_INFO_DIR=./data/auth_info
+DATABASE_DIR=./data/database
+DATABASE_FILE=./data/database/funnel.db
+MEDIA_DIR=./data/media
+`;
+    try {
+      fs.writeFileSync(envExamplePath, content, "utf-8");
+    } catch {
+      // Ignora erro de gravacao
+    }
+  }
+}
+
 export function ensureDataDirectoriesExist(paths: StoragePaths = env.paths): void {
   const dirs = [
     paths.dataDir,
@@ -135,6 +216,9 @@ export function ensureDataDirectoriesExist(paths: StoragePaths = env.paths): voi
       fs.mkdirSync(dir, { recursive: true });
     }
   }
+
+  ensurePlaceholderMediaExist(paths.mediaDir);
+  ensureEnvExampleExists();
 }
 
 export function initSqliteDatabase(dbFilePath: string = env.paths.databaseFile): Database.Database {
