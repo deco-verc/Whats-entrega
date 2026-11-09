@@ -570,6 +570,92 @@
         </div>
       </div>
 
+      <!-- Card: Testar Funil no Meu WhatsApp -->
+      <div class="card" id="card-simulador-whatsapp" style="margin-bottom: 24px; border: 1px solid var(--border-strong);">
+        <div class="card-header" style="background: var(--bg-elevated); display: flex; justify-content: space-between; align-items: center;">
+          <div class="card-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--accent-primary);">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+            </svg>
+            Testar Funil no Meu WhatsApp
+          </div>
+          <span class="badge badge-info" id="sim-badge">Simulador de Eventos Cakto</span>
+        </div>
+        <div class="card-body">
+          <div id="sim-alert" class="alert-box"></div>
+
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 18px;">
+            <div class="form-group" style="margin-bottom: 0;">
+              <label class="form-label" for="sim-phone">Telefone (com DDD)</label>
+              <input id="sim-phone" class="form-control tabular-nums" type="text" placeholder="Ex: (11) 99887-7665 ou 5511998877665">
+              <span style="font-size: 11px; color: var(--text-muted); margin-top: 4px; display: block;">Informe seu número com DDD para receber as mensagens reais do funil no WhatsApp.</span>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 0;">
+              <label class="form-label" for="sim-name">Nome do Cliente</label>
+              <input id="sim-name" class="form-control" type="text" placeholder="Ex: Rodrigo Silva" value="Rodrigo Teste">
+              <span style="font-size: 11px; color: var(--text-muted); margin-top: 4px; display: block;">Nome para interpolação das variáveis {first_name} nos áudios e textos.</span>
+            </div>
+          </div>
+
+          <div>
+            <span class="form-label" style="margin-bottom: 8px;">Ações Rápidas de Simulação:</span>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px;">
+              <button type="button" class="btn" id="btn-sim-pix" data-action="sim-cakto" data-event="pix_generated" style="justify-content: center; background: rgba(245, 158, 11, 0.12); border-color: rgba(245, 158, 11, 0.35); color: var(--status-warning);">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="2" y="5" width="20" height="14" rx="2"></rect>
+                  <line x1="2" y1="10" x2="22" y2="10"></line>
+                </svg>
+                <span>Simular PIX Gerado</span>
+              </button>
+
+              <button type="button" class="btn btn-primary" id="btn-sim-main" data-action="sim-cakto" data-event="purchase_approved" data-product="MAIN" style="justify-content: center;">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                  <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                </svg>
+                <span>Simular Compra Aprovada (Principal)</span>
+              </button>
+
+              <button type="button" class="btn" id="btn-sim-upsell" data-action="sim-cakto" data-event="purchase_approved" data-product="UPSELL_1" style="justify-content: center; background: rgba(99, 102, 241, 0.18); border-color: var(--accent-primary); color: #fff;">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="12" y1="19" x2="12" y2="5"></line>
+                  <polyline points="5 12 12 5 19 12"></polyline>
+                </svg>
+                <span>Simular Compra Upsell 1</span>
+              </button>
+
+              <button type="button" class="btn" id="btn-sim-reply" data-action="sim-cakto" data-event="customer_reply" style="justify-content: center; background: rgba(16, 185, 129, 0.15); border-color: rgba(16, 185, 129, 0.4); color: var(--status-success);">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                </svg>
+                <span>Simular Resposta do Cliente</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Painel de Telemetria da Simulação -->
+          <div id="sim-telemetry-box" style="display: none; background: var(--bg-primary); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px; margin-top: 14px; font-size: 12px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+              <span style="color: var(--text-secondary);">Evento / Ação:</span>
+              <code id="sim-res-event" class="tabular-nums">-</code>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+              <span style="color: var(--text-secondary);">Transação Cakto ID:</span>
+              <code id="sim-res-txid" class="tabular-nums">-</code>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+              <span style="color: var(--text-secondary);">Assinatura HMAC SHA-256:</span>
+              <code id="sim-res-hmac" class="tabular-nums" style="max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">-</code>
+            </div>
+            <div style="display: flex; justify-content: space-between;">
+              <span style="color: var(--text-secondary);">Resultado:</span>
+              <span id="sim-res-status" class="badge badge-success">OK</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="content-grid">
         <div class="card">
           <div class="card-header">
@@ -1259,6 +1345,36 @@
       if (tabName === "templates") loadTemplates();
     }
 
+    function formatPairingCode(code) {
+      if (!code) return "";
+      const cleaned = String(code).replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+      if (cleaned.length === 8) {
+        return `${cleaned.slice(0, 4)} - ${cleaned.slice(4)}`;
+      }
+      return String(code);
+    }
+
+    function renderPairingCodeBox(code) {
+      const box = document.getElementById("wa-pairing-code-box");
+      const digitsEl = document.getElementById("wa-pairing-code-digits");
+      if (box && digitsEl && code) {
+        state.pairingCode = code;
+        digitsEl.textContent = formatPairingCode(code);
+        box.style.display = "block";
+      }
+    }
+
+    function showWaAuthAlert(msg, type = "info") {
+      const alertBox = document.getElementById("wa-auth-alert");
+      if (!alertBox) return;
+      alertBox.className = `alert-box ${type}`;
+      alertBox.textContent = msg;
+      alertBox.style.display = "block";
+      if (type === "success") {
+        setTimeout(() => { alertBox.style.display = "none"; }, 6000);
+      }
+    }
+
     // Carregamento de Status via GET /api/status (sobrevive a F5)
     async function loadStatus() {
       try {
@@ -1272,19 +1388,72 @@
         const waText = document.getElementById("wa-status-text");
         const waCardBadge = document.getElementById("wa-connection-card-badge");
         const waStatus = data.whatsapp || "IDLE";
+        const qrString = data.qr || data.whatsapp_details?.qr || null;
+        const pairingCode = data.pairing_code || data.pairingCode || data.whatsapp_details?.pairing_code || null;
 
-        waText.textContent = `WhatsApp: ${waStatus}`;
-        waCardBadge.textContent = waStatus;
+        if (waText) waText.textContent = `WhatsApp: ${waStatus}`;
 
         if (waStatus === "CONNECTED") {
-          waBadge.className = "badge badge-success";
-          waCardBadge.className = "badge badge-success";
-        } else if (waStatus === "CONNECTING" || waStatus === "RECONNECTING") {
-          waBadge.className = "badge badge-warning";
-          waCardBadge.className = "badge badge-warning";
+          if (waBadge) waBadge.className = "badge badge-success";
+          if (waCardBadge) {
+            waCardBadge.className = "badge badge-success";
+            waCardBadge.textContent = "Conectado";
+          }
+        } else if (waStatus === "CONNECTING") {
+          if (waBadge) waBadge.className = "badge badge-warning";
+          if (waCardBadge) {
+            waCardBadge.className = "badge badge-warning";
+            waCardBadge.textContent = "Conectando...";
+          }
+        } else if (waStatus === "RECONNECTING") {
+          if (waBadge) waBadge.className = "badge badge-warning";
+          if (waCardBadge) {
+            waCardBadge.className = "badge badge-warning";
+            waCardBadge.textContent = "Reconectando...";
+          }
+        } else if (waStatus === "LOGGED_OUT") {
+          if (waBadge) waBadge.className = "badge badge-info";
+          if (waCardBadge) {
+            waCardBadge.className = "badge badge-info";
+            waCardBadge.textContent = "Desconectado (Logout)";
+          }
         } else {
-          waBadge.className = "badge badge-info";
-          waCardBadge.className = "badge badge-info";
+          if (waBadge) waBadge.className = "badge badge-info";
+          if (waCardBadge) {
+            waCardBadge.className = "badge badge-info";
+            waCardBadge.textContent = "Desconectado";
+          }
+        }
+
+        // Alterna entre visão conectada e desconectada
+        const viewConnected = document.getElementById("wa-view-connected");
+        const viewDisconnected = document.getElementById("wa-view-disconnected");
+
+        if (waStatus === "CONNECTED") {
+          if (viewConnected) viewConnected.style.display = "flex";
+          if (viewDisconnected) viewDisconnected.style.display = "none";
+        } else {
+          if (viewConnected) viewConnected.style.display = "none";
+          if (viewDisconnected) viewDisconnected.style.display = "flex";
+
+          // Renderiza ou oculta QR Code
+          const qrImg = document.getElementById("wa-qr-img");
+          const qrPlaceholder = document.getElementById("wa-qr-placeholder");
+          if (qrString) {
+            if (qrImg) {
+              qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=8&data=${encodeURIComponent(qrString)}`;
+              qrImg.style.display = "block";
+            }
+            if (qrPlaceholder) qrPlaceholder.style.display = "none";
+          } else {
+            if (qrImg) qrImg.style.display = "none";
+            if (qrPlaceholder) qrPlaceholder.style.display = "flex";
+          }
+
+          // Se veio pairing code na resposta da api
+          if (pairingCode) {
+            renderPairingCodeBox(pairingCode);
+          }
         }
 
         // Atualiza KPIs
@@ -1966,6 +2135,108 @@
       if (refreshBtn) {
         refreshBtn.addEventListener("click", loadTemplates);
       }
+
+      // =========================================================================
+      // Simulador de Eventos Cakto ("Testar Funil no Meu WhatsApp")
+      // =========================================================================
+      const savedSimPhone = localStorage.getItem("wa_sim_phone");
+      if (savedSimPhone && document.getElementById("sim-phone")) {
+        document.getElementById("sim-phone").value = savedSimPhone;
+      }
+
+      document.querySelectorAll('button[data-action="sim-cakto"]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const alertBox = document.getElementById("sim-alert");
+          const phoneInput = document.getElementById("sim-phone");
+          const nameInput = document.getElementById("sim-name");
+          const telemetryBox = document.getElementById("sim-telemetry-box");
+
+          const phone = phoneInput ? phoneInput.value.trim() : "";
+          const name = nameInput ? nameInput.value.trim() : "Cliente Teste";
+          const event = btn.getAttribute("data-event") || "purchase_approved";
+          const productType = btn.getAttribute("data-product") || "MAIN";
+
+          if (!phone || phone.replace(/\D/g, "").length < 8) {
+            if (alertBox) {
+              alertBox.className = "alert-box error";
+              alertBox.textContent = "Erro: informe um telefone válido com DDD para simular os disparos.";
+              alertBox.style.display = "block";
+            }
+            if (phoneInput) phoneInput.focus();
+            return;
+          }
+
+          localStorage.setItem("wa_sim_phone", phone);
+
+          const origContent = btn.innerHTML;
+          btn.disabled = true;
+          btn.innerHTML = '<span class="spinner"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg></span> <span>Simulando...</span>';
+
+          try {
+            const body = {
+              phone,
+              name: name || "Cliente Teste",
+              event,
+              productType,
+              text: "SIM",
+            };
+
+            const res = await fetch("/api/simulator/cakto", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            });
+
+            const data = await res.json();
+
+            if (res.ok && data.success) {
+              if (alertBox) {
+                alertBox.className = "alert-box success";
+                alertBox.textContent = data.message || "Evento simulado com sucesso!";
+                alertBox.style.display = "block";
+              }
+
+              if (telemetryBox) {
+                telemetryBox.style.display = "block";
+                document.getElementById("sim-res-event").textContent = data.simulated_event || data.mode || event;
+                document.getElementById("sim-res-txid").textContent = data.transaction_id || "-";
+                document.getElementById("sim-res-hmac").textContent = data.hmac_signature || "-";
+                const stBadge = document.getElementById("sim-res-status");
+                stBadge.className = "badge badge-success";
+                stBadge.textContent = "PROCESSADO";
+              }
+
+              await loadStatus();
+              await loadQueue();
+              await loadOrders();
+            } else {
+              if (alertBox) {
+                alertBox.className = "alert-box error";
+                alertBox.textContent = `Erro na simulação (HTTP ${res.status}): ${data.message || data.error || "Erro desconhecido"}`;
+                alertBox.style.display = "block";
+              }
+              if (telemetryBox) {
+                telemetryBox.style.display = "block";
+                document.getElementById("sim-res-event").textContent = event;
+                document.getElementById("sim-res-txid").textContent = "-";
+                document.getElementById("sim-res-hmac").textContent = "-";
+                const stBadge = document.getElementById("sim-res-status");
+                stBadge.className = "badge badge-warning";
+                stBadge.textContent = "FALHOU";
+              }
+            }
+          } catch (err) {
+            if (alertBox) {
+              alertBox.className = "alert-box error";
+              alertBox.textContent = `Erro de rede ao conectar com /api/simulator/cakto: ${err.message}`;
+              alertBox.style.display = "block";
+            }
+          } finally {
+            btn.disabled = false;
+            btn.innerHTML = origContent;
+          }
+        });
+      });
 
       // Carga inicial (F5 reload persistence)
       loadStatus();
