@@ -661,6 +661,16 @@ export class AuditLogRepository {
     }
     return this.stmtList.all(Math.max(1, limit)) as AuditLog[];
   }
+
+  public listByEntity(entity: string, entityId?: string): AuditLog[] {
+    if (entityId) {
+      const stmt = this.db.prepare<[string, string]>(
+        "SELECT * FROM audit_logs WHERE entity = ? AND entity_id = ? ORDER BY created_at DESC"
+      );
+      return stmt.all(entity, entityId) as AuditLog[];
+    }
+    return this.stmtListByEntity.all(entity, 100) as AuditLog[];
+  }
 }
 
 // ============================================================================
@@ -784,16 +794,23 @@ export class TemplateRepository {
       vars[key] = val;
       if (key === "first_name") vars["primeiro_nome"] = val;
       if (key === "primeiro_nome") vars["first_name"] = val;
+      if (key === "name") vars["nome"] = val;
+      if (key === "nome") vars["name"] = val;
       if (key === "product_name") vars["produto"] = val;
       if (key === "produto") vars["product_name"] = val;
       if (key === "pix_code") vars["pix_copia_cola"] = val;
       if (key === "pix_copia_cola") vars["pix_code"] = val;
       if (key === "checkout_url") {
+        if (!vars["link"]) vars["link"] = val;
         if (!vars["link_checkout"]) vars["link_checkout"] = val;
         if (!vars["link_acesso"]) vars["link_acesso"] = val;
         if (!vars["link_upsell_1"]) vars["link_upsell_1"] = val;
         if (!vars["link_upsell_2"]) vars["link_upsell_2"] = val;
         if (!vars["link_downsell"]) vars["link_downsell"] = val;
+      }
+      if (key === "link") {
+        if (!vars["link_checkout"]) vars["link_checkout"] = val;
+        if (!vars["checkout_url"]) vars["checkout_url"] = val;
       }
     }
 
@@ -913,7 +930,78 @@ export class TemplateRepository {
   }
 
   public seedFunnelTemplates(force = false): number {
-    return this.seedDefaultTemplates(force);
+    const funnelTemplates: CreateTemplateInput[] = [
+      {
+        id: "PIX_RECOVERY",
+        name: "PIX_RECOVERY",
+        content:
+          CATALOG.MAIN.pixRecovery?.messagesSpintax[0] ??
+          "{Ola|Oi|Fala}, *{primeiro_nome}*! Vi que voce gerou o Pix para o *{produto}*, mas ainda nao concluiu o pagamento.\n\nPara nao perder sua vaga e o valor promocional, segue abaixo o seu codigo Pix Copia e Cola:\n\n```{pix_code}```\n\nAssim que pagar, o sistema libera seu material imediatamente por aqui. Precisa de alguma ajuda?",
+        tags: ["nome", "primeiro_nome", "produto", "pix_code"],
+        media_path: null,
+      },
+      {
+        id: "MAIN_DELIVERY",
+        name: "MAIN_DELIVERY",
+        content:
+          CATALOG.MAIN.delivery.messagesSpintax[0] ??
+          "{Ola|Oi|Fala}, *{primeiro_nome}*! Parabens pela decisao! Seu pagamento do *{produto}* foi confirmado com sucesso.\n\nAcabei de anexar acima o seu material em PDF para download imediato.\n\nConseguiu abrir o material direitinho? Me responde SIM aqui so para eu confirmar.",
+        tags: ["nome", "primeiro_nome", "produto", "link"],
+        media_path: CATALOG.MAIN.delivery.mediaFiles[0]?.fileName
+          ? `data/media/${CATALOG.MAIN.delivery.mediaFiles[0].fileName}`
+          : "data/media/guia_definitivo_alta_conversao.pdf",
+      },
+      {
+        id: "UPSELL_1_OFFER",
+        name: "UPSELL_1_OFFER",
+        content:
+          CATALOG.UPSELL_1.pitch?.messagesSpintax[0] ??
+          "{Escuta|Ouve} esse audio rapidinho de 1 minuto que gravei exclusivamente para voce, *{primeiro_nome}*.\n\nComo voce ja garantiu o metodo principal, liberei uma condicao unica de upgrade para ter acesso aos nossos templates prontos de alta conversao:\n\nAcesse pelo link oficial: {link}",
+        tags: ["nome", "primeiro_nome", "produto", "link"],
+        media_path: CATALOG.UPSELL_1.pitch?.audioFileName
+          ? `data/media/${CATALOG.UPSELL_1.pitch.audioFileName}`
+          : "data/media/pitch_upsell_1.ogg",
+      },
+      {
+        id: "DOWNSELL_OFFER",
+        name: "DOWNSELL_OFFER",
+        content:
+          CATALOG.DOWNSELL.pitch?.messagesSpintax[0] ??
+          "{Oi|Fala}, *{primeiro_nome}*! Sei que a rotina e corrida e talvez o investimento no pacote completo nao tenha sido no momento ideal.\n\nPara nao te deixar sem apoio na implementacao, conversei com a equipe e liberamos uma versao essencial com 65% de desconto apenas hoje:\n\nAcesse pelo link oficial: {link}",
+        tags: ["nome", "primeiro_nome", "produto", "link"],
+        media_path: CATALOG.DOWNSELL.pitch?.audioFileName
+          ? `data/media/${CATALOG.DOWNSELL.pitch.audioFileName}`
+          : "data/media/pitch_downsell.ogg",
+      },
+      {
+        id: "UPSELL_2_OFFER",
+        name: "UPSELL_2_OFFER",
+        content:
+          CATALOG.UPSELL_2.pitch?.messagesSpintax[0] ??
+          "*{primeiro_nome}*, preparei uma oportunidade final restrita apenas a quem adquiriu o pacote completo.\n\n{Escuta|Confere} o audio explicativo que mandei acima. Se quiser dar o proximo passo na sua operacao, acesse pelo link especial:\n\nAcesse pelo link oficial: {link}",
+        tags: ["nome", "primeiro_nome", "produto", "link"],
+        media_path: CATALOG.UPSELL_2.pitch?.audioFileName
+          ? `data/media/${CATALOG.UPSELL_2.pitch.audioFileName}`
+          : "data/media/pitch_upsell_2.ogg",
+      },
+    ];
+
+    let inserted = 0;
+    for (const tpl of funnelTemplates) {
+      const existing = (tpl.id ? this.findById(tpl.id) : null) || this.findByName(tpl.name);
+      if (!existing) {
+        this.create(tpl);
+        inserted++;
+      } else if (force) {
+        this.update(existing.id, {
+          content: tpl.content,
+          tags: tpl.tags,
+          media_path: tpl.media_path,
+        });
+        inserted++;
+      }
+    }
+    return inserted;
   }
 
   public seedIfEmpty(force = false): number {

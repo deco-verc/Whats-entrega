@@ -94,24 +94,23 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
     }
 
     const manager = options.whatsappManager ?? whatsappManager;
-    const waStatus = manager.getStatus();
-    const waQr = manager.getQr();
-    const waPairingCode = manager.getPairingCode();
+    const waConnection = manager.getConnectionState();
 
     res.status(200).json({
       status: "ok",
       uptime: process.uptime(),
       timestamp: new Date().toISOString(),
       database: "connected",
-      whatsapp: waStatus,
-      qr: waQr,
-      pairing_code: waPairingCode,
-      pairingCode: waPairingCode,
+      whatsapp: waConnection,
+      qr: waConnection.qr,
+      pairing_code: waConnection.pairingCode,
+      pairingCode: waConnection.pairingCode,
       whatsapp_details: {
-        status: waStatus,
+        status: waConnection.status,
         connected: manager.isConnected(),
-        qr: waQr,
-        pairing_code: waPairingCode,
+        qr: waConnection.qr,
+        pairing_code: waConnection.pairingCode,
+        connectedPhone: waConnection.connectedPhone,
       },
       port: options.port ?? (process.env.PORT ? Number(process.env.PORT) : env.port),
       stats: {
@@ -261,6 +260,23 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
     } catch (err: unknown) {
       res.status(500).json({
         error: "DisconnectError",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  });
+
+  app.post("/api/whatsapp/logout", async (_req: Request, res: Response): Promise<void> => {
+    try {
+      const manager = options.whatsappManager ?? whatsappManager;
+      await manager.logout();
+      res.status(200).json({
+        success: true,
+        status: manager.getStatus(),
+        message: "Sessao WhatsApp desconectada e limpa com sucesso.",
+      });
+    } catch (err: unknown) {
+      res.status(500).json({
+        error: "LogoutError",
         message: err instanceof Error ? err.message : String(err),
       });
     }

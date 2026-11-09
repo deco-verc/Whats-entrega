@@ -333,6 +333,60 @@ describe("Worker de Fila Anti-Banimento e Entrypoint (worker.ts & index.ts)", ()
       assert.equal(jobAfter?.status, "PENDING");
       assert.ok(jobAfter?.last_error?.includes("Socket WhatsApp nao disponivel"));
     });
+
+    test("fallback de midia inexistente: nao deve falhar job e deve enviar mensagem de texto registrando WARN no audit_logs", async () => {
+      const sentMessages: Array<{ jid: string; content: any }> = [];
+      const mockSock = {
+        authState: { creds: { registered: true } },
+        onWhatsApp: async (...phones: string[]) => {
+          return phones.map((p) => ({ exists: true, jid: `${p.replace(/\D/g, "")}@s.whatsapp.net` }));
+        },
+        sendMessage: async (jid: string, content: any) => {
+          sentMessages.push({ jid, content });
+          return { key: { id: "mock_fallback_id" } };
+        },
+      } as unknown as WASocket;
+
+      const customer = repos.customers.upsert({
+        phone: "5511933332211",
+        name: "Cliente Midia Ausente",
+      });
+
+      const nonExistentPath = "data/media/arquivo_que_definitivamente_nao_existe.pdf";
+
+      const job = repos.messageQueue.enqueue({
+        customer_id: customer.id,
+        phone: customer.phone,
+        message_type: "DELIVERY_MAIN",
+        content: "Acesse o seu guia no link abaixo: https://painel.aluno.com",
+        media_path: nonExistentPath,
+        scheduled_at: new Date(Date.now() - 1000),
+      });
+
+      const worker = new QueueWorker({
+        repos,
+        sock: mockSock,
+        minJitterMs: 0,
+        maxJitterMs: 0,
+        dispatchOptions: { skipPresenceSimulation: true },
+      });
+
+      const result = await worker.processNextJob();
+      assert.ok(result);
+      assert.equal(result?.dispatchResult.success, true);
+
+      // Job deve ser marcado como SENT e nao FAILED
+      const jobAfter = repos.messageQueue.findById(job.id);
+      assert.equal(jobAfter?.status, "SENT");
+
+      // Deve ter enviado via sendTextMessage (content.text)
+      assert.ok(sentMessages.length >= 1);
+      assert.ok(sentMessages[0].content.text.includes("Acesse o seu guia"));
+
+      // Deve ter registrado WARN no audit_logs
+      const logs = repos.auditLogs.listLogs("message_queue");
+      assert.ok(logs.some((l) => l.action === "MEDIA_FALLBACK_TEXT"));
+    });
   });
 
   describe("Ciclo de Vida do Worker (start/stop) e Delay Elastico (Jitter)", () => {

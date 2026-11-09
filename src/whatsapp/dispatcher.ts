@@ -506,6 +506,34 @@ export async function sendDocumentMessage(
   }
 }
 
+/**
+ * Utilitario para resolucao e verificacao da existencia fisica de arquivos de midia no disco
+ */
+export function resolveMediaFilePath(filePathOrName?: string | null): string | null {
+  if (!filePathOrName || typeof filePathOrName !== "string") return null;
+  const trimmed = filePathOrName.trim();
+  if (!trimmed) return null;
+
+  if (path.isAbsolute(trimmed)) {
+    return fs.existsSync(trimmed) ? trimmed : null;
+  }
+
+  const inCwd = path.resolve(process.cwd(), trimmed);
+  if (fs.existsSync(inCwd)) return inCwd;
+
+  const inMediaDir = path.resolve(env.paths.mediaDir, trimmed);
+  if (fs.existsSync(inMediaDir)) return inMediaDir;
+
+  const inMediaDirBasename = path.resolve(env.paths.mediaDir, path.basename(trimmed));
+  if (fs.existsSync(inMediaDirBasename)) return inMediaDirBasename;
+
+  return null;
+}
+
+export function isMediaFileAvailable(filePathOrName?: string | null): boolean {
+  return resolveMediaFilePath(filePathOrName) !== null;
+}
+
 export interface DispatchQueueJobOptions extends DispatchOptions {
   readonly customerRepo?: CustomerRepository;
   readonly queueRepo?: MessageQueueRepository;
@@ -521,6 +549,8 @@ export async function dispatchQueueJob(
   options?: DispatchQueueJobOptions
 ): Promise<DispatchResult> {
   const queueRepo = options?.queueRepo ?? messageQueueRepository;
+  const auditRepo = options?.auditRepo ?? auditLogRepository;
+
   const isMarked = queueRepo.markAsProcessing(job.id);
   if (!isMarked && job.status !== "PROCESSING") {
     return {
@@ -537,56 +567,49 @@ export async function dispatchQueueJob(
     const resolved = await resolveJid(job.phone, sock, {
       updateDatabase: true,
       customerRepo: options?.customerRepo,
-      auditRepo: options?.auditRepo,
+      auditRepo: auditRepo,
     });
     targetJid = resolved.jid;
   }
 
   let result: DispatchResult;
+  const msgTypeUpper = (job.message_type || "").toUpperCase();
 
-  if (job.message_type === "AUDIO_PTT" || job.message_type === "audio_ptt") {
+  if (msgTypeUpper === "AUDIO_PTT") {
     const audioTarget = job.media_path || job.content;
-    let resolved = path.isAbsolute(audioTarget)
-      ? audioTarget
-      : path.resolve(env.paths.mediaDir, audioTarget);
-    if (!fs.existsSync(resolved)) {
-      resolved = path.resolve(process.cwd(), audioTarget);
-    }
+    const resolvedAudio = resolveMediaFilePath(audioTarget);
 
-    if (!fs.existsSync(resolved)) {
-      if (options?.auditRepo) {
-        options.auditRepo.log("Dispatcher", "MEDIA_FALLBACK_TEXT", "message_queue", job.id, {
-          level: "WARN",
-          reason: "Audio file not found on disk, falling back to text",
-          media_path: audioTarget,
-        });
-      }
+    if (!resolvedAudio) {
+      auditRepo.log("dispatcher", "MEDIA_MISSING_FALLBACK_TEXT", "message_queue", job.id, {
+        level: "WARN",
+        jobId: job.id,
+        messageType: job.message_type,
+        mediaPath: job.media_path,
+        reason: "Arquivo de audio PTT inexistente no disco, realizando fallback para mensagem de texto",
+        fallbackContent: job.content,
+      });
       result = await sendTextMessage(sock, targetJid, job.content, options);
     } else {
-      result = await sendAudioPtt(sock, targetJid, audioTarget, options);
+      result = await sendAudioPtt(sock, targetJid, resolvedAudio, options);
     }
-  } else if (job.message_type === "DOCUMENT" || job.message_type === "document") {
-    const docPath = job.media_path || job.content;
-    const fileName = path.basename(docPath);
-    const caption = job.content !== docPath ? job.content : undefined;
-    let resolved = path.isAbsolute(docPath)
-      ? docPath
-      : path.resolve(env.paths.mediaDir, docPath);
-    if (!fs.existsSync(resolved)) {
-      resolved = path.resolve(process.cwd(), docPath);
-    }
+  } else if (msgTypeUpper === "DOCUMENT") {
+    const docTarget = job.media_path || job.content;
+    const resolvedDoc = resolveMediaFilePath(docTarget);
 
-    if (!fs.existsSync(resolved)) {
-      if (options?.auditRepo) {
-        options.auditRepo.log("Dispatcher", "MEDIA_FALLBACK_TEXT", "message_queue", job.id, {
-          level: "WARN",
-          reason: "Document file not found on disk, falling back to text",
-          media_path: docPath,
-        });
-      }
-      result = await sendTextMessage(sock, targetJid, caption || job.content, options);
+    if (!resolvedDoc) {
+      auditRepo.log("dispatcher", "MEDIA_MISSING_FALLBACK_TEXT", "message_queue", job.id, {
+        level: "WARN",
+        jobId: job.id,
+        messageType: job.message_type,
+        mediaPath: job.media_path,
+        reason: "Arquivo de documento inexistente no disco, realizando fallback para mensagem de texto",
+        fallbackContent: job.content,
+      });
+      result = await sendTextMessage(sock, targetJid, job.content, options);
     } else {
-      result = await sendDocumentMessage(sock, targetJid, docPath, fileName, "application/pdf", caption, options);
+      const fileName = path.basename(resolvedDoc);
+      const caption = job.content !== docTarget ? job.content : undefined;
+      result = await sendDocumentMessage(sock, targetJid, resolvedDoc, fileName, "application/pdf", caption, options);
     }
   } else {
     result = await sendTextMessage(sock, targetJid, job.content, options);

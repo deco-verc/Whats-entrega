@@ -428,6 +428,109 @@ describe("Spintax e Fila de Mensagens (dispatcher.ts)", () => {
 
     db.close();
   });
+
+  test("dispatchQueueJob com AUDIO_PTT e media_path inexistente deve fazer fallback para sendTextMessage, registrar log e marcar SENT", async () => {
+    const db = createDatabaseConnection(":memory:");
+    const custRepo = new CustomerRepository(db);
+    const queueRepo = new MessageQueueRepository(db);
+    const auditRepo = new AuditLogRepository(db);
+
+    const customer = custRepo.upsert({
+      phone: "5511991112222",
+      name: "Roberta Lima",
+      jid: "5511991112222@s.whatsapp.net",
+    });
+
+    const job = queueRepo.enqueue({
+      customer_id: customer.id,
+      phone: customer.phone,
+      jid: customer.jid,
+      message_type: "AUDIO_PTT",
+      content: "Mensagem fallback de audio ausente",
+      media_path: "data/media/audio_que_nao_existe_no_disco_12345.ogg",
+      scheduled_at: new Date(),
+    });
+
+    const { sock, calls } = createMockWASocket();
+
+    const result = await dispatchQueueJob(job, sock, {
+      skipPresenceSimulation: true,
+      queueRepo,
+      customerRepo: custRepo,
+      auditRepo,
+    });
+
+    assert.equal(result.success, true);
+
+    // Valida que o socket enviou mensagem de texto (fallback) e nao audio
+    const sendCalls = calls.filter((c) => c.method === "sendMessage");
+    assert.equal(sendCalls.length, 1);
+    const sentPayload = sendCalls[0].args[1] as Record<string, unknown>;
+    assert.equal(sentPayload.text, "Mensagem fallback de audio ausente");
+    assert.equal(sentPayload.audio, undefined);
+
+    // Valida que o job foi marcado como SENT
+    const updatedJob = queueRepo.findById(job.id);
+    assert.equal(updatedJob?.status, "SENT");
+
+    // Valida que houve registro de auditoria
+    const logs = auditRepo.listByEntity("message_queue", job.id);
+    assert.ok(logs.length >= 1);
+    assert.ok(logs.some((l) => l.action === "MEDIA_MISSING_FALLBACK_TEXT"));
+
+    db.close();
+  });
+
+  test("dispatchQueueJob com DOCUMENT e media_path inexistente deve fazer fallback para sendTextMessage, registrar log e marcar SENT", async () => {
+    const db = createDatabaseConnection(":memory:");
+    const custRepo = new CustomerRepository(db);
+    const queueRepo = new MessageQueueRepository(db);
+    const auditRepo = new AuditLogRepository(db);
+
+    const customer = custRepo.upsert({
+      phone: "5511993334444",
+      name: "Diego Marques",
+      jid: "5511993334444@s.whatsapp.net",
+    });
+
+    const job = queueRepo.enqueue({
+      customer_id: customer.id,
+      phone: customer.phone,
+      jid: customer.jid,
+      message_type: "DOCUMENT",
+      content: "Mensagem fallback de documento ausente",
+      media_path: "data/media/documento_inexistente_99999.pdf",
+      scheduled_at: new Date(),
+    });
+
+    const { sock, calls } = createMockWASocket();
+
+    const result = await dispatchQueueJob(job, sock, {
+      skipPresenceSimulation: true,
+      queueRepo,
+      customerRepo: custRepo,
+      auditRepo,
+    });
+
+    assert.equal(result.success, true);
+
+    // Valida que enviou texto e nao documento
+    const sendCalls = calls.filter((c) => c.method === "sendMessage");
+    assert.equal(sendCalls.length, 1);
+    const sentPayload = sendCalls[0].args[1] as Record<string, unknown>;
+    assert.equal(sentPayload.text, "Mensagem fallback de documento ausente");
+    assert.equal(sentPayload.document, undefined);
+
+    // Valida que o job foi marcado como SENT
+    const updatedJob = queueRepo.findById(job.id);
+    assert.equal(updatedJob?.status, "SENT");
+
+    // Valida log de auditoria
+    const logs = auditRepo.listByEntity("message_queue", job.id);
+    assert.ok(logs.some((l) => l.action === "MEDIA_MISSING_FALLBACK_TEXT"));
+
+    db.close();
+  });
 });
 
 describe("Extracao e Filtragem de Mensagens Inbound (socket.ts)", () => {

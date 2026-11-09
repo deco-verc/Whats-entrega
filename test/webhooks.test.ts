@@ -398,4 +398,60 @@ describe("Servidor HTTP de Webhooks Cakto (server.ts)", () => {
 
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
+
+  test("GET /api/status deve expor objeto whatsapp estruturado { status, qr, pairingCode, connectedPhone }", async () => {
+    const app = createWebhookApp();
+    const server = http.createServer(app);
+
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const port = (server.address() as any).port;
+
+    const res = await fetch(`http://127.0.0.1:${port}/api/status`);
+    assert.equal(res.status, 200);
+    const data = await res.json() as any;
+
+    assert.equal(data.status, "ok");
+    assert.ok(data.whatsapp);
+    assert.ok("status" in data.whatsapp);
+    assert.ok("qr" in data.whatsapp);
+    assert.ok("pairingCode" in data.whatsapp);
+    assert.ok("connectedPhone" in data.whatsapp);
+
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  test("POST /api/whatsapp/pair deve validar telefone e rejeitar payload invalido", async () => {
+    const app = createWebhookApp();
+    const server = http.createServer(app);
+
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const port = (server.address() as any).port;
+
+    const resInvalid = await fetch(`http://127.0.0.1:${port}/api/whatsapp/pair`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone: "123" }),
+    });
+    assert.equal(resInvalid.status, 400);
+
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  test("POST /api/whatsapp/logout deve desconectar sessao com sucesso", async () => {
+    const app = createWebhookApp();
+    const server = http.createServer(app);
+
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const port = (server.address() as any).port;
+
+    const resLogout = await fetch(`http://127.0.0.1:${port}/api/whatsapp/logout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    assert.equal(resLogout.status, 200);
+    const json = await resLogout.json() as any;
+    assert.equal(json.success, true);
+
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
 });

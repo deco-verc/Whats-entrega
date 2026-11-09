@@ -490,4 +490,141 @@ describe("Maquina de Estados Hibrida do Funil de Vendas (state-machine.ts)", () 
       assert.equal(refundRes.newState, "REFUNDED");
     });
   });
+
+  describe("Ponte Dinâmica de Templates (TemplateRepository e Fallback ao Catálogo)", () => {
+    test("deve usar template customizado do SQLite se existir, interpolando {primeiro_nome}, {produto} e {pix_copia_cola}", () => {
+      // Cria template customizado com Spintax e tags em Portugues
+      repos.templates.create({
+        id: "PIX_RECOVERY",
+        name: "PIX_RECOVERY",
+        content: "{Fala|E ai}, {primeiro_nome}! Seu pedido do {produto} tem PIX pendente: {pix_copia_cola}",
+        tags: ["primeiro_nome", "produto", "pix_copia_cola"],
+      });
+
+      const result = machine.handlePixGenerated({
+        transactionId: "trx_custom_tpl_pix",
+        phone: "11977776666",
+        name: "Marcos Vinicius",
+        pixCode: "PIX_CODE_TESTE_123",
+      });
+
+      assert.equal(result.success, true);
+      assert.equal(result.enqueuedJobsCount, 1);
+
+      const jobs = repos.messageQueue.listByCustomerId(result.customerId, "PENDING");
+      assert.equal(jobs.length, 1);
+      const content = jobs[0].content;
+      assert.ok(content.startsWith("Fala, Marcos!") || content.startsWith("E ai, Marcos!"));
+      assert.ok(content.includes("PIX_CODE_TESTE_123"));
+      assert.ok(content.includes(CATALOG.MAIN.name));
+    });
+
+    test("deve fazer fallback seguro aos textos estaticos do CATALOG se o template customizado nao existir", () => {
+      // Garante que nao ha templates
+      const allTpls = repos.templates.findAll();
+      for (const t of allTpls) {
+        repos.templates.delete(t.id);
+      }
+
+      const result = machine.handlePixGenerated({
+        transactionId: "trx_fallback_pix",
+        phone: "11988885555",
+        name: "Bruna Silva",
+        pixCode: "PIX_CODE_FALLBACK",
+      });
+
+      assert.equal(result.success, true);
+      assert.ok(result.enqueuedJobsCount >= 1);
+
+      const jobs = repos.messageQueue.listByCustomerId(result.customerId, "PENDING");
+      assert.ok(jobs.length >= 1);
+      assert.ok(jobs.some((j) => j.content.includes("PIX_CODE_FALLBACK")));
+    });
+
+    test("seedDefaultTemplates deve popular os 8 templates canonicos do funil", () => {
+      const seeded = repos.templates.seedDefaultTemplates();
+      assert.equal(seeded, 8);
+
+      const all = repos.templates.findAll();
+      assert.equal(all.length, 8);
+
+      const expectedIds = [
+        "PIX_RECOVERY",
+        "MAIN_DELIVERY",
+        "UPSELL_1_OFFER",
+        "UPSELL_1_DELIVERY",
+        "DOWNSELL_OFFER",
+        "DOWNSELL_DELIVERY",
+        "UPSELL_2_OFFER",
+        "UPSELL_2_DELIVERY",
+      ];
+
+      for (const id of expectedIds) {
+        const found = repos.templates.findById(id);
+        assert.ok(found, `Template ${id} deve existir no banco apos seed`);
+      }
+    });
+
+    test("seedFunnelTemplates deve popular os 5 templates principais do funil com tags e caminhos de midia do catalog.ts", () => {
+      // Limpa templates para teste isolado
+      const allTpls = repos.templates.findAll();
+      for (const t of allTpls) {
+        repos.templates.delete(t.id);
+      }
+
+      const inserted = repos.templates.seedFunnelTemplates();
+      assert.equal(inserted, 5);
+
+      const requiredKeys = [
+        "PIX_RECOVERY",
+        "MAIN_DELIVERY",
+        "UPSELL_1_OFFER",
+        "DOWNSELL_OFFER",
+        "UPSELL_2_OFFER",
+      ];
+
+      for (const key of requiredKeys) {
+        const tpl = repos.templates.findById(key);
+        assert.ok(tpl, `Template ${key} deve ter sido criado pelo seedFunnelTemplates`);
+        assert.equal(tpl?.name, key);
+      }
+
+      // Valida idempotencia
+      const secondCall = repos.templates.seedFunnelTemplates();
+      assert.equal(secondCall, 0);
+    });
+
+    test("FunnelStateMachine deve buscar templates no TemplateRepository e interpolar {nome}, {primeiro_nome}, {produto}, {link} e Spintax", () => {
+      repos.templates.seedFunnelTemplates();
+
+      // Customiza template de UPSELL_1_OFFER com tags explicitas
+      repos.templates.update("UPSELL_1_OFFER", {
+        content: "{Ola|Oi}, {nome} ({primeiro_nome})! Adquira o upgrade do {produto} no link oficial: {link}",
+      });
+
+      // Gera evento de compra do produto principal
+      const purchaseEvent: PurchaseApprovedEvent = {
+        transactionId: "trx_tmpl_full_eval_01",
+        phone: "5511987654321",
+        name: "Guilherme Santos",
+        productId: CATALOG.MAIN.productId,
+      };
+
+      const result = machine.handlePurchaseApproved(purchaseEvent);
+      assert.equal(result.success, true);
+
+      // Valida que PITCH_UPSELL_1 usou o template customizado do banco
+      const customer = repos.customers.findByPhone("5511987654321")!;
+      const pendingJobs = repos.messageQueue.listByCustomerId(customer.id, "PENDING");
+      const pitchJob = pendingJobs.find((j) => j.message_type === "PITCH_UPSELL_1" && j.content.includes("Guilherme"));
+      assert.ok(pitchJob, "Deve encontrar o job de texto do UPSELL 1 com o template do banco");
+
+      assert.ok(pitchJob.content.includes("Guilherme Santos"), "Deve conter tag {nome}");
+      assert.ok(pitchJob.content.includes("Guilherme"), "Deve conter tag {primeiro_nome}");
+      assert.ok(pitchJob.content.includes(CATALOG.MAIN.name), "Deve conter tag {produto}");
+      assert.ok(pitchJob.content.includes("https://checkout.cakto.com.br"), "Deve conter tag {link}");
+      assert.ok(!pitchJob.content.includes("{link}"), "Nao deve sobrar tag {link} nao interpolada");
+      assert.ok(!pitchJob.content.includes("{nome}"), "Nao deve sobrar tag {nome} nao interpolada");
+    });
+  });
 });
