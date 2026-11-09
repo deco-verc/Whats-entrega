@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
 import { getDatabase } from "./connection.js";
+import { CATALOG } from "../config/catalog.js";
 
 // ============================================================================
 // Tipagens e Contratos de Entidades do Dominio
@@ -776,9 +777,28 @@ export class TemplateRepository {
     const rawContent = typeof contentOrTemplate === "string" ? contentOrTemplate : contentOrTemplate.content;
     let resolved = rawContent;
 
-    // 1. Interpola tags {{tag}} e {tag}
+    // Normaliza variaveis e aliases
+    const vars: Record<string, string> = {};
     for (const [key, value] of Object.entries(variables)) {
-      const valStr = value !== undefined && value !== null ? String(value) : "";
+      const val = value !== undefined && value !== null ? String(value) : "";
+      vars[key] = val;
+      if (key === "first_name") vars["primeiro_nome"] = val;
+      if (key === "primeiro_nome") vars["first_name"] = val;
+      if (key === "product_name") vars["produto"] = val;
+      if (key === "produto") vars["product_name"] = val;
+      if (key === "pix_code") vars["pix_copia_cola"] = val;
+      if (key === "pix_copia_cola") vars["pix_code"] = val;
+      if (key === "checkout_url") {
+        if (!vars["link_checkout"]) vars["link_checkout"] = val;
+        if (!vars["link_acesso"]) vars["link_acesso"] = val;
+        if (!vars["link_upsell_1"]) vars["link_upsell_1"] = val;
+        if (!vars["link_upsell_2"]) vars["link_upsell_2"] = val;
+        if (!vars["link_downsell"]) vars["link_downsell"] = val;
+      }
+    }
+
+    // 1. Interpola tags {{tag}} e {tag}
+    for (const [key, valStr] of Object.entries(vars)) {
       resolved = resolved.replace(new RegExp(`\\{\\{${key}\\}\\}`, "g"), valStr);
       resolved = resolved.replace(new RegExp(`\\{${key}\\}`, "g"), valStr);
     }
@@ -818,54 +838,84 @@ export class TemplateRepository {
     return { valid: true };
   }
 
-  public seedIfEmpty(force = false): number {
+  public seedDefaultTemplates(force = false): number {
     const existing = this.findAll();
     if (!force && existing.length > 0) return 0;
 
-    const initialTemplates: CreateTemplateInput[] = [
+    const defaultTemplates: CreateTemplateInput[] = [
       {
-        id: "tpl_welcome_delivery",
-        name: "Boas-vindas e Entrega Imediata",
-        content: "{Ola|Oi|Fala}, {first_name}! Tudo bem?\n\nSeu pedido do produto {product_name} foi confirmado com sucesso!\n\nSegue em anexo o material de acesso exclusivo. Qualquer duvida estou por aqui!",
-        tags: ["first_name", "product_name"],
-        media_path: "data/media/entrega.pdf",
+        id: "PIX_RECOVERY",
+        name: "PIX_RECOVERY",
+        content: "{Ola|Oi|Fala}, *{primeiro_nome}*! Vi que voce gerou o Pix para o *{produto}*, mas ainda nao concluiu o pagamento.\n\nPara nao perder sua vaga e o valor promocional, segue abaixo o seu codigo Pix Copia e Cola:\n\n```{pix_copia_cola}```\n\nAssim que pagar, o sistema libera seu material imediatamente por aqui. Precisa de alguma ajuda?",
+        tags: ["primeiro_nome", "produto", "pix_copia_cola"],
+        media_path: null,
       },
       {
-        id: "tpl_pix_recovery",
-        name: "Recuperacao de PIX Pendente",
-        content: "{Ola|Oi}, {first_name}!\n\nNotei que voce gerou o pedido do {product_name}, mas o PIX ainda esta pendente.\n\nSeu codigo copia e cola:\n{pix_code}\n\nGaranta sua vaga antes que o link expire!",
-        tags: ["first_name", "product_name", "pix_code"],
+        id: "MAIN_DELIVERY",
+        name: "MAIN_DELIVERY",
+        content: "{Ola|Oi|Fala}, *{primeiro_nome}*! Parabens pela decisao! Seu pagamento do *{produto}* foi confirmado com sucesso.\n\nAcabei de anexar acima o seu material em PDF para download imediato.\n\nConseguiu abrir o material direitinho? Me responde SIM aqui so para eu confirmar.",
+        tags: ["primeiro_nome", "produto"],
+        media_path: "data/media/guia_definitivo_alta_conversao.pdf",
       },
       {
-        id: "tpl_upsell_pitch",
-        name: "Pitch de Aceleracao (Upsell)",
-        content: "{E ai|Fala}, {first_name}! Parabens por garantir o {product_name}!\n\nTenho uma condicao especial exclusiva para a oferta {offer_name}:\n{checkout_url}\n\nOuça este audio rapido que gravei para voce!",
-        tags: ["first_name", "product_name", "offer_name", "checkout_url"],
-        media_path: "data/media/audio_pitch.ogg",
+        id: "UPSELL_1_OFFER",
+        name: "UPSELL_1_OFFER",
+        content: "{Escuta|Ouve} esse audio rapidinho de 1 minuto que gravei exclusivamente para voce, *{primeiro_nome}*.\n\nComo voce ja garantiu o metodo principal, liberei uma condicao unica de upgrade para ter acesso aos nossos templates prontos de alta conversao:\n\nAcesse pelo link oficial: {link_pagamento}",
+        tags: ["primeiro_nome", "produto", "link_pagamento"],
+        media_path: "data/media/pitch_upsell_1.ogg",
       },
       {
-        id: "tpl_downsell_offer",
-        name: "Oferta Especial Downsell",
-        content: "{Ola|Oi}, {first_name}! Entendo que o valor do upgrade possa ter ficado acima do planejado.\n\nPor isso liberei esta versao essencial com condicao imperdivel:\n{checkout_url}\n\nAproveite agora!",
-        tags: ["first_name", "checkout_url"],
+        id: "UPSELL_1_DELIVERY",
+        name: "UPSELL_1_DELIVERY",
+        content: "{Perfeito|Show|Sensacional}, *{primeiro_nome}*! Seu upgrade para o Acelerador foi ativado com sucesso.\n\nSegue acima o material completo do Pacote de Templates.\n\nMaterial do Acelerador entregue! Conseguiu baixar o arquivo?",
+        tags: ["primeiro_nome"],
+        media_path: "data/media/pack_templates_acelerador.pdf",
       },
       {
-        id: "tpl_support_followup",
-        name: "Suporte e Acompanhamento",
-        content: "{Ola|Oi|Tudo bem}, {first_name}!\n\nPassando para saber se conseguiu abrir seu {product_name} e se precisa de alguma ajuda.\n\nConte comigo!",
-        tags: ["first_name", "product_name"],
+        id: "DOWNSELL_OFFER",
+        name: "DOWNSELL_OFFER",
+        content: "{Oi|Fala}, *{primeiro_nome}*! Sei que a rotina e corrida e talvez o investimento no pacote completo nao tenha sido no momento ideal.\n\nPara nao te deixar sem apoio na implementacao, conversei com a equipe e liberamos uma versao essencial com 65% de desconto apenas hoje:\n\nAcesse pelo link oficial: {link_pagamento}",
+        tags: ["primeiro_nome", "link_pagamento"],
+        media_path: "data/media/pitch_downsell.ogg",
+      },
+      {
+        id: "DOWNSELL_DELIVERY",
+        name: "DOWNSELL_DELIVERY",
+        content: "Parabens, *{primeiro_nome}*! Seu acesso a Versao Essencial dos Templates foi entregue acima.\n\nTudo certo com o download dos seus templates essenciais?",
+        tags: ["primeiro_nome"],
+        media_path: "data/media/pack_templates_essenciais.pdf",
+      },
+      {
+        id: "UPSELL_2_OFFER",
+        name: "UPSELL_2_OFFER",
+        content: "*{primeiro_nome}*, preparei uma oportunidade final restrita apenas a quem adquiriu o pacote completo.\n\n{Escuta|Confere} o audio explicativo que mandei acima. Se quiser dar o proximo passo na sua operacao, acesse pelo link especial:\n\nAcesse pelo link oficial: {link_pagamento}",
+        tags: ["primeiro_nome", "link_pagamento"],
+        media_path: "data/media/pitch_upsell_2.ogg",
+      },
+      {
+        id: "UPSELL_2_DELIVERY",
+        name: "UPSELL_2_DELIVERY",
+        content: "Acesso liberado a Masterclass de Escala! Bons estudos e boas vendas, *{primeiro_nome}*.",
+        tags: ["primeiro_nome"],
+        media_path: "data/media/masterclass_escala_acesso.pdf",
       },
     ];
 
     let inserted = 0;
-    for (const tpl of initialTemplates) {
-      if (!this.findById(tpl.id || "")) {
+    for (const tpl of defaultTemplates) {
+      if (!this.findById(tpl.id || "") && !this.findByName(tpl.name)) {
         this.create(tpl);
         inserted++;
       }
     }
 
     return inserted;
+  }
+
+  public seedIfEmpty(force = false): number {
+    const existing = this.findAll();
+    if (!force && existing.length > 0) return 0;
+    return this.seedDefaultTemplates(force);
   }
 }
 
@@ -905,5 +955,9 @@ export const orderRepository = repositories.orders;
 export const messageQueueRepository = repositories.messageQueue;
 export const auditLogRepository = repositories.auditLogs;
 export const templateRepository = repositories.templates;
+
+export function seedDefaultTemplates(repo: TemplateRepository = templateRepository): number {
+  return repo.seedDefaultTemplates();
+}
 
 export default repositories;

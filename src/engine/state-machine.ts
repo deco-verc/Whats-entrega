@@ -56,6 +56,7 @@ export interface PixGeneratedEvent {
   readonly pixCode: string;
   readonly totalCents?: number;
   readonly rawPayload?: unknown;
+  readonly allowExistingOrder?: boolean;
 }
 
 export interface PurchaseApprovedEvent {
@@ -69,6 +70,7 @@ export interface PurchaseApprovedEvent {
   readonly paidAt?: string | Date | null;
   readonly totalCents?: number;
   readonly rawPayload?: unknown;
+  readonly allowExistingOrder?: boolean;
 }
 
 export interface InboundMessageEvent {
@@ -83,6 +85,7 @@ export interface RefundEvent {
   readonly phone?: string;
   readonly reason?: string;
   readonly rawPayload?: unknown;
+  readonly allowExistingOrder?: boolean;
 }
 
 export interface StateMachineResult {
@@ -171,7 +174,7 @@ export class FunnelStateMachine {
         raw_payload: rawPayload,
       });
 
-      if (!orderResult.inserted) {
+      if (!orderResult.inserted && !event.allowExistingOrder) {
         return {
           success: true,
           customerId: customer.id,
@@ -204,9 +207,13 @@ export class FunnelStateMachine {
 
       const templateVars: Record<string, string> = {
         first_name: firstName,
+        primeiro_nome: firstName,
         product_name: product.name,
+        produto: product.name,
         pix_code: event.pixCode,
+        pix_copia_cola: event.pixCode,
         checkout_url: selectedOffer?.checkoutUrl ?? "",
+        link_checkout: selectedOffer?.checkoutUrl ?? "",
       };
 
       const messages = pixConfig?.messagesSpintax ?? [
@@ -329,7 +336,7 @@ export class FunnelStateMachine {
         raw_payload: rawPayload,
       });
 
-      if (!orderResult.inserted) {
+      if (!orderResult.inserted && !event.allowExistingOrder) {
         return {
           success: true,
           customerId: customer.id,
@@ -367,9 +374,19 @@ export class FunnelStateMachine {
         this.repos.customers.updateState(customer.id, newState);
 
         // 3. Agenda DELIVERY_MAIN imediato
+        const selectedOffer =
+          (event.offerId && catalogItem.offers[event.offerId]) ||
+          catalogItem.offers[catalogItem.defaultOfferId];
+
         const templateVars: Record<string, string> = {
           first_name: firstName,
+          primeiro_nome: firstName,
           product_name: catalogItem.name,
+          produto: catalogItem.name,
+          link_acesso: selectedOffer?.checkoutUrl ?? "https://painel.aluno.com",
+          access_link: selectedOffer?.checkoutUrl ?? "https://painel.aluno.com",
+          checkout_url: selectedOffer?.checkoutUrl ?? "",
+          link_checkout: selectedOffer?.checkoutUrl ?? "",
         };
 
         let messageStep = 0;
@@ -434,8 +451,15 @@ export class FunnelStateMachine {
 
         const upsellVars: Record<string, string> = {
           first_name: firstName,
-          product_name: upsell1Config.name,
+          primeiro_nome: firstName,
+          product_name: catalogItem.name,
+          produto: catalogItem.name,
+          nome_upsell_1: upsell1Config.name,
+          upsell_1_name: upsell1Config.name,
+          link_upsell_1: upsell1Config.pitch?.checkoutUrl ?? upsell1Offer.checkoutUrl,
+          upsell_1_link: upsell1Config.pitch?.checkoutUrl ?? upsell1Offer.checkoutUrl,
           checkout_url: upsell1Config.pitch?.checkoutUrl ?? upsell1Offer.checkoutUrl,
+          link_checkout: upsell1Config.pitch?.checkoutUrl ?? upsell1Offer.checkoutUrl,
         };
 
         // Pitch de áudio PTT do Upsell 1
@@ -480,8 +504,15 @@ export class FunnelStateMachine {
 
         const downsellVars: Record<string, string> = {
           first_name: firstName,
-          product_name: downsellConfig.name,
+          primeiro_nome: firstName,
+          product_name: catalogItem.name,
+          produto: catalogItem.name,
+          nome_downsell: downsellConfig.name,
+          downsell_name: downsellConfig.name,
+          link_downsell: downsellConfig.pitch?.checkoutUrl ?? downsellOffer.checkoutUrl,
+          downsell_link: downsellConfig.pitch?.checkoutUrl ?? downsellOffer.checkoutUrl,
           checkout_url: downsellConfig.pitch?.checkoutUrl ?? downsellOffer.checkoutUrl,
+          link_checkout: downsellConfig.pitch?.checkoutUrl ?? downsellOffer.checkoutUrl,
         };
 
         if (downsellConfig.pitch?.audioFileName) {
@@ -578,8 +609,17 @@ export class FunnelStateMachine {
 
         const upsell2Vars: Record<string, string> = {
           first_name: firstName,
-          product_name: upsell2Config.name,
+          primeiro_nome: firstName,
+          product_name: catalogItem.name,
+          produto: catalogItem.name,
+          nome_upsell_1: CATALOG.UPSELL_1.name,
+          upsell_1_name: CATALOG.UPSELL_1.name,
+          nome_upsell_2: upsell2Config.name,
+          upsell_2_name: upsell2Config.name,
+          link_upsell_2: upsell2Config.pitch?.checkoutUrl ?? upsell2Offer.checkoutUrl,
+          upsell_2_link: upsell2Config.pitch?.checkoutUrl ?? upsell2Offer.checkoutUrl,
           checkout_url: upsell2Config.pitch?.checkoutUrl ?? upsell2Offer.checkoutUrl,
+          link_checkout: upsell2Config.pitch?.checkoutUrl ?? upsell2Offer.checkoutUrl,
         };
 
         if (upsell2Config.pitch?.audioFileName) {

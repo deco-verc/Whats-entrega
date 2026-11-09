@@ -188,4 +188,16 @@ describe("Catalogo Declarativo de Produtos e Ofertas Cakto (catalog.ts)", () => 
     assert.equal(isMainProduct("off_main_full"), true);
     assert.equal(isMainProduct("prod_upsell_01"), false);
   });
+
+  test("catalogo deve suportar scripts de alta conversao com tags dinamicas e spintax", () => {
+    const main = getProductByType("MAIN");
+    assert.equal(main.pixRecovery?.messagesSpintax.length, 2);
+    assert.ok(main.pixRecovery?.messagesSpintax[1].includes("pix_copia_cola"));
+
+    const upsell1 = getProductByType("UPSELL_1");
+    assert.equal(upsell1.offers[upsell1.defaultOfferId].priceCents, 6700);
+
+    const downsell = getProductByType("DOWNSELL");
+    assert.equal(downsell.offers[downsell.defaultOfferId].priceCents, 2990);
+  });
 });

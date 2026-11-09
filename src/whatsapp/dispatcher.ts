@@ -288,27 +288,54 @@ export async function simulateRecordingPresence(
 }
 
 /**
- * Resolve Spintax ({A|B|C}) e interpola variaveis {{chave}}
+ * Resolve Spintax ({A|B|C}) e interpola variaveis {{chave}} ou {chave} com aliases
  */
 export function resolveSpintax(
   template: string,
   variables: Record<string, string | number | undefined | null> = {}
 ): string {
-  // 1. Interpola variaveis do template primeiro: {{variavel}}
   let resolved = template;
+
+  // Mapa de aliases e variaveis normalizadas
+  const vars: Record<string, string> = {};
   for (const [key, value] of Object.entries(variables)) {
-    const placeholder = new RegExp(`\\{\\{${key}\\}\\}`, "g");
-    resolved = resolved.replace(placeholder, String(value ?? ""));
+    const val = value !== undefined && value !== null ? String(value) : "";
+    vars[key] = val;
+    if (key === "first_name") vars["primeiro_nome"] = val;
+    if (key === "primeiro_nome") vars["first_name"] = val;
+    if (key === "product_name") vars["produto"] = val;
+    if (key === "produto") vars["product_name"] = val;
+    if (key === "pix_code") vars["pix_copia_cola"] = val;
+    if (key === "pix_copia_cola") vars["pix_code"] = val;
+    if (key === "checkout_url") {
+      if (!vars["link_checkout"]) vars["link_checkout"] = val;
+      if (!vars["link_acesso"]) vars["link_acesso"] = val;
+      if (!vars["link_upsell_1"]) vars["link_upsell_1"] = val;
+      if (!vars["link_upsell_2"]) vars["link_upsell_2"] = val;
+      if (!vars["link_downsell"]) vars["link_downsell"] = val;
+    }
+  }
+
+  // 1. Interpola variaveis do template: {{chave}} e {chave}
+  for (const [key, val] of Object.entries(vars)) {
+    resolved = resolved.replace(new RegExp(`\\{\\{${key}\\}\\}`, "g"), val);
+    resolved = resolved.replace(new RegExp(`\\{${key}\\}`, "g"), val);
   }
 
   // 2. Resolve Spintax: {opcao1|opcao2|opcao3}
   const spintaxRegex = /\{([^{}]+)\}/;
-  while (true) {
+  let safetyLoop = 0;
+  while (safetyLoop++ < 200) {
     const match = spintaxRegex.exec(resolved);
     if (!match) break;
-    const choices = match[1].split("|");
-    const chosen = choices[Math.floor(Math.random() * choices.length)];
-    resolved = resolved.slice(0, match.index) + chosen + resolved.slice(match.index + match[0].length);
+    if (match[1].includes("|")) {
+      const choices = match[1].split("|");
+      const chosen = choices[Math.floor(Math.random() * choices.length)];
+      resolved = resolved.slice(0, match.index) + chosen + resolved.slice(match.index + match[0].length);
+    } else {
+      // Chave sem pipe nao reconhecida: remove para evitar loop infinito
+      resolved = resolved.slice(0, match.index) + "" + resolved.slice(match.index + match[0].length);
+    }
   }
 
   return resolved;

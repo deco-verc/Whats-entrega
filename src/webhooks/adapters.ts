@@ -68,11 +68,24 @@ export function sanitizePhone(rawPhone: string): string {
 }
 
 /**
- * Validação segura de secret da Cakto utilizando comparação de tempo constante
+ * Calcula assinatura HMAC-SHA256 para payloads de webhook da Cakto
+ */
+export function computeCaktoHmac(
+  payload: string | Record<string, unknown>,
+  secret: string = env.caktoWebhookSecret
+): string {
+  const content = typeof payload === "string" ? payload : JSON.stringify(payload);
+  return crypto.createHmac("sha256", secret.trim()).update(content).digest("hex");
+}
+
+/**
+ * Validação segura de secret da Cakto utilizando comparação de tempo constante.
+ * Suporta tanto token estático quanto assinatura HMAC-SHA256 do payload.
  */
 export function validateCaktoSecret(
   providedSecret: string | undefined | null,
-  expectedSecret: string = env.caktoWebhookSecret
+  expectedSecret: string = env.caktoWebhookSecret,
+  rawPayload?: unknown
 ): boolean {
   if (!providedSecret || typeof providedSecret !== "string") {
     return false;
@@ -88,14 +101,28 @@ export function validateCaktoSecret(
     return false;
   }
 
+  // 1. Verificacao direta de segredo estatico (compatibilidade retroativa e testes)
   const bufProvided = Buffer.from(cleanProvided, "utf-8");
   const bufExpected = Buffer.from(cleanExpected, "utf-8");
 
-  if (bufProvided.length !== bufExpected.length) {
-    return false;
+  if (bufProvided.length === bufExpected.length && crypto.timingSafeEqual(bufProvided, bufExpected)) {
+    return true;
   }
 
-  return crypto.timingSafeEqual(bufProvided, bufExpected);
+  // 2. Verificacao por assinatura HMAC-SHA256
+  if (rawPayload) {
+    try {
+      const hmacHex = computeCaktoHmac(rawPayload as string | Record<string, unknown>, cleanExpected);
+      const bufHmac = Buffer.from(hmacHex, "utf-8");
+      if (bufProvided.length === bufHmac.length && crypto.timingSafeEqual(bufProvided, bufHmac)) {
+        return true;
+      }
+    } catch {
+      // Ignora falha de hash se payload for invalido
+    }
+  }
+
+  return false;
 }
 
 /**

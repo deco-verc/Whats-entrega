@@ -122,6 +122,21 @@ describe("Editor de Templates com Tags Dinamicas e Spintax (TemplateRepository &
       assert.ok(!result.includes("{{checkout_url}}"));
     });
 
+    test("deve interpolar tags dinamicas em portugues (primeiro_nome, produto, pix_copia_cola)", () => {
+      const template = "{Oi|Ola}, {primeiro_nome}! Seu {produto} tem o Pix: {pix_copia_cola}";
+      const result = repo.interpolate(template, {
+        first_name: "Deco",
+        product_name: "Metodo Pro",
+        pix_code: "123456789",
+      });
+      assert.ok(result.includes("Deco"));
+      assert.ok(result.includes("Metodo Pro"));
+      assert.ok(result.includes("123456789"));
+      assert.ok(!result.includes("{primeiro_nome}"));
+      assert.ok(!result.includes("{produto}"));
+      assert.ok(!result.includes("{pix_copia_cola}"));
+    });
+
     test("deve validar sintaxe Spintax e detectar chaves desbalanceadas", () => {
       const valid = repo.validateSpintax("{Ola|Oi}, {first_name}!");
       assert.equal(valid.valid, true);

@@ -123,6 +123,9 @@ export function extractMessageText(msg: WAMessage): string {
 export class WhatsAppSocketManager {
   private sock: WASocket | null = null;
   private status: WhatsAppConnectionStatus = "IDLE";
+  private qr: string | null = null;
+  private pairingCode: string | null = null;
+  private connectedPhone: string | null = null;
   private reconnectAttempts = 0;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private pairingCodeTimer: NodeJS.Timeout | null = null;
@@ -138,6 +141,54 @@ export class WhatsAppSocketManager {
 
   public getSocket(): WASocket | null {
     return this.sock;
+  }
+
+  public getQr(): string | null {
+    return this.qr;
+  }
+
+  public getPairingCode(): string | null {
+    return this.pairingCode;
+  }
+
+  public getConnectedPhone(): string | null {
+    return this.connectedPhone;
+  }
+
+  public getConnectionState(): {
+    status: WhatsAppConnectionStatus;
+    qr: string | null;
+    pairingCode: string | null;
+    connectedPhone: string | null;
+  } {
+    return {
+      status: this.status,
+      qr: this.qr,
+      pairingCode: this.pairingCode,
+      connectedPhone: this.connectedPhone,
+    };
+  }
+
+  public getState(): {
+    status: WhatsAppConnectionStatus;
+    qr: string | null;
+    pairingCode: string | null;
+    connected: boolean;
+  } {
+    return {
+      status: this.status,
+      qr: this.qr,
+      pairingCode: this.pairingCode,
+      connected: this.isConnected(),
+    };
+  }
+
+  public setQrForTesting(qr: string | null): void {
+    this.qr = qr;
+  }
+
+  public setPairingCodeForTesting(code: string | null): void {
+    this.pairingCode = code;
   }
 
   public isConnected(): boolean {
@@ -226,6 +277,7 @@ export class WhatsAppSocketManager {
         try {
           if (this.sock && !this.sock.authState.creds.registered) {
             const pairingCode = await this.sock.requestPairingCode(cleanPhone);
+            this.pairingCode = pairingCode;
             console.log("------------------------------------------");
             console.log(`[WhatsApp] PAIRING CODE GERADO: ${pairingCode}`);
             console.log(`[WhatsApp] Insira no WhatsApp (Aparelhos conectados > Conectar com numero de telefone)`);
@@ -252,12 +304,19 @@ export class WhatsAppSocketManager {
     sock.ev.on("connection.update", (update: Partial<ConnectionState>) => {
       const { connection, lastDisconnect, qr } = update;
 
-      if (qr && !pairingPhone && (options.printQrTerminal ?? false)) {
-        console.log("[WhatsApp] QR Code emitido para pareamento no terminal");
+      if (qr) {
+        this.qr = qr;
+        if (!pairingPhone && (options.printQrTerminal ?? false)) {
+          console.log("[WhatsApp] QR Code emitido para pareamento no terminal");
+        }
       }
 
       if (connection === "open") {
         this.reconnectAttempts = 0;
+        this.qr = null;
+        this.pairingCode = null;
+        const userJid = sock.user?.id || "";
+        this.connectedPhone = userJid.split(":")[0].replace(/\D/g, "") || null;
         this.setStatus("CONNECTED");
       } else if (connection === "close") {
         const boomError = lastDisconnect?.error as Boom | undefined;
@@ -265,6 +324,9 @@ export class WhatsAppSocketManager {
         const isLoggedOut = statusCode === DisconnectReason.loggedOut;
 
         if (isLoggedOut) {
+          this.qr = null;
+          this.pairingCode = null;
+          this.connectedPhone = null;
           this.setStatus("LOGGED_OUT", boomError);
           return;
         }
@@ -355,6 +417,54 @@ export class WhatsAppSocketManager {
   }
 
   /**
+   * Solicita o codigo de pareamento de 8 digitos do Baileys para o telefone informado
+   */
+  public async requestPairingCode(phone: string): Promise<string> {
+    const cleanPhone = (phone || "").replace(/\D/g, "");
+    if (cleanPhone.length < 10) {
+      throw new Error("Telefone invalido para pareamento. Forneca DDD + Numero (minimo 10 digitos).");
+    }
+
+    if (this.isConnected() && this.sock?.authState?.creds?.registered) {
+      throw new Error("WhatsApp ja esta autenticado e conectado.");
+    }
+
+    // Se o socket nao existir ou estiver desligado, inicia o socket
+    if (!this.sock || this.status === "IDLE" || this.status === "DISCONNECTED" || this.status === "LOGGED_OUT") {
+      await this.connect({
+        ...this.currentOptions,
+        pairingPhone: cleanPhone,
+      });
+    }
+
+    if (!this.sock) {
+      throw new Error("Falha ao inicializar socket WhatsApp.");
+    }
+
+    if (this.sock.authState?.creds?.registered) {
+      throw new Error("WhatsApp ja possui credenciais registradas.");
+    }
+
+    if (this.pairingCodeTimer) {
+      clearTimeout(this.pairingCodeTimer);
+      this.pairingCodeTimer = null;
+    }
+
+    const code = await this.sock.requestPairingCode(cleanPhone);
+    this.pairingCode = code;
+
+    for (const handler of this.pairingCodeHandlers) {
+      try {
+        void handler(code);
+      } catch (handlerErr) {
+        console.error("[WhatsApp] Erro no handler de pairing code:", handlerErr);
+      }
+    }
+
+    return code;
+  }
+
+  /**
    * Encerramento gracioso da conexao Baileys
    */
   public async disconnect(): Promise<void> {
@@ -378,8 +488,56 @@ export class WhatsAppSocketManager {
       this.sock = null;
     }
 
+    this.qr = null;
+    this.pairingCode = null;
+    this.connectedPhone = null;
     this.reconnectAttempts = 0;
     this.setStatus("IDLE");
+  }
+
+  /**
+   * Encerra a sessao do WhatsApp e limpa credenciais para permitir novo pareamento
+   */
+  public async logout(): Promise<void> {
+    this.isExplicitDisconnect = true;
+
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.pairingCodeTimer) {
+      clearTimeout(this.pairingCodeTimer);
+      this.pairingCodeTimer = null;
+    }
+
+    if (this.sock) {
+      try {
+        await this.sock.logout();
+      } catch {
+        try {
+          this.sock.end(undefined);
+        } catch {
+          // Socket ja pode estar fechado
+        }
+      }
+      this.sock = null;
+    }
+
+    const authDir = this.currentOptions.authInfoDir || env.paths.authInfoDir;
+    try {
+      if (fs.existsSync(authDir)) {
+        fs.rmSync(authDir, { recursive: true, force: true });
+        fs.mkdirSync(authDir, { recursive: true });
+      }
+    } catch (err) {
+      console.warn("[WhatsApp] Falha ao limpar authInfoDir no logout:", err);
+    }
+
+    this.qr = null;
+    this.pairingCode = null;
+    this.connectedPhone = null;
+    this.reconnectAttempts = 0;
+    this.setStatus("LOGGED_OUT");
   }
 }
 
@@ -398,8 +556,33 @@ export function getWhatsAppConnectionStatus(): WhatsAppConnectionStatus {
   return whatsappManager.getStatus();
 }
 
+export function getWhatsAppConnectionState(): {
+  status: WhatsAppConnectionStatus;
+  qr: string | null;
+  pairingCode: string | null;
+  connectedPhone: string | null;
+} {
+  return whatsappManager.getConnectionState();
+}
+
+export function getWhatsAppQr(): string | null {
+  return whatsappManager.getQr();
+}
+
+export function getWhatsAppPairingCode(): string | null {
+  return whatsappManager.getPairingCode();
+}
+
+export async function requestWhatsAppPairingCode(phone: string): Promise<string> {
+  return whatsappManager.requestPairingCode(phone);
+}
+
 export async function disconnectWhatsApp(): Promise<void> {
   return whatsappManager.disconnect();
+}
+
+export async function logoutWhatsApp(): Promise<void> {
+  return whatsappManager.logout();
 }
 
 export default whatsappManager;

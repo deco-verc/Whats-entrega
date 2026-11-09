@@ -75,11 +75,10 @@ export const CATALOG: Record<ProductType, CatalogItem> = {
       },
     },
     pixRecovery: {
-      delaySeconds: 420, // 7 minutos
+      delaySeconds: 420, // 7 minutos padrao configuravel (disparo planejado +3 min no fluxo de recuperacao)
       messagesSpintax: [
-        "{Ola|Oi|Fala}, *{{first_name}}*! Vi que voce gerou o Pix para o *{{product_name}}*, mas ainda nao concluiu o pagamento.",
-        "Para nao perder sua vaga e o valor promocional, segue abaixo o seu codigo Pix Copia e Cola:\n\n```{{pix_code}}```",
-        "Assim que pagar, o sistema libera seu material imediatamente por aqui. Precisa de alguma ajuda?",
+        "{Oi|Ola|Opa}, *{primeiro_nome}*! Tudo {bem|certo|otimo} por ai?\n\nVi aqui no sistema que voce acabou de gerar o seu acesso para o *{produto}*, mas o pagamento via PIX ainda consta como pendente.\n\n{As vezes o banco da uma travadinha|Sei que na correria acaba passando|Como as vagas com esse bonus sao limitadas}, ja separei o seu acesso aqui para {liberar imediatamente|te enviar agora mesmo} assim que compensar!\n\nPara facilitar, {vou deixar|esta logo abaixo} o seu codigo *PIX Copia e Cola* na proxima mensagem. E so copiar, colar no app do banco e me mandar um *\"PRONTO\"* aqui que eu ja libero seu material na hora!",
+        "{pix_copia_cola}",
       ],
     },
     delivery: {
@@ -92,11 +91,10 @@ export const CATALOG: Record<ProductType, CatalogItem> = {
         },
       ],
       messagesSpintax: [
-        "{Ola|Oi|Fala}, *{{first_name}}*! Parabens pela decisao! Seu pagamento foi confirmado com sucesso.",
-        "Acabei de anexar acima o seu material em PDF para download imediato.",
+        "{Parabens|Show de bola|Seja muito bem-vindo(a)}, *{primeiro_nome}*! Seu pagamento foi confirmado com sucesso!\n\nAqui esta o seu acesso oficial ao *{produto}*:\n*Link de Acesso:* {link_acesso}\n\n{Salve esse contato na sua agenda|Favorita essa mensagem} para nao perder o link.",
       ],
       microCommitmentQuestion:
-        "Conseguiu abrir o material direitinho? Me responde SIM aqui so para eu confirmar.",
+        "{Conseguiu abrir o material direitinho?|Tudo certo com o material?} Me responde SIM aqui so para eu confirmar!",
     },
     nextSteps: [
       {
@@ -117,15 +115,14 @@ export const CATALOG: Record<ProductType, CatalogItem> = {
       off_upsell_1_standard: {
         offerId: "off_upsell_1_standard",
         name: "Pacote Acelerador Completo",
-        priceCents: 14700,
+        priceCents: 6700,
         checkoutUrl: "https://checkout.cakto.com.br/upsell-1-pack",
       },
     },
     pitch: {
       audioFileName: "pitch_upsell_1.ogg",
       messagesSpintax: [
-        "{Escuta|Ouve} esse audio rapidinho de 1 minuto que gravei exclusivamente para voce, *{{first_name}}*.",
-        "Como voce ja garantiu o metodo principal, liberei uma condicao unica de upgrade para ter acesso aos nossos templates prontos de alta conversao:\n\nAcesse pelo link oficial: {{checkout_url}}",
+        "*{primeiro_nome}*, {que massa|perfeito|excelente}! Olha so, como voce acabou de entrar, o sistema liberou uma condicao {unica|exclusiva de novo aluno} no seu cadastro.\n\nQuem entra no *{produto}* geralmente leva de 2 a 3 semanas configurando tudo manualmente. Mas eu criei o *{nome_upsell_1}*, onde eu te entrego *tudo 100% pronto para copiar, colar e rodar ainda hoje*.\n\n*O que voce destrava agora:*\n- Pack completo pronto para uso imediato\n- {Acompanhamento passo a passo|Modelos validados de alta conversao}\n- Bonus de implementacao rapida\n\nDe R$ 197 por *apenas R$ 67* (somente aqui dentro do WhatsApp por voce ja ser aluno).\n\nQuer aproveitar essa condicao especial? Toca no link abaixo para liberar junto com seu acesso principal:\n{link_upsell_1}\n\n_(Se tiver qualquer duvida, me manda um \"EU QUERO\" aqui que eu te explico em 30 segundos!)_",
       ],
       checkoutUrl: "https://checkout.cakto.com.br/upsell-1-pack",
     },
@@ -139,8 +136,7 @@ export const CATALOG: Record<ProductType, CatalogItem> = {
         },
       ],
       messagesSpintax: [
-        "{Perfeito|Show|Sensacional}, *{{first_name}}*! Seu upgrade para o Acelerador foi ativado com sucesso.",
-        "Segue acima o material completo do Pacote de Templates.",
+        "{Perfeito|Show|Sensacional}, *{primeiro_nome}*! Seu upgrade para o Acelerador foi ativado com sucesso.\n\nSegue acima o material completo do Pacote de Templates.",
       ],
       microCommitmentQuestion:
         "Material do Acelerador entregue! Conseguiu baixar o arquivo?",
@@ -176,8 +172,7 @@ export const CATALOG: Record<ProductType, CatalogItem> = {
     pitch: {
       audioFileName: "pitch_upsell_2.ogg",
       messagesSpintax: [
-        "*{{first_name}}*, preparei uma oportunidade final restrita apenas a quem adquiriu o pacote completo.",
-        "{Escuta|Confere} o audio explicativo que mandei acima. Se quiser dar o proximo passo na sua operacao, acesse pelo link especial:\n\nAcesse pelo link oficial: {{checkout_url}}",
+        "*{primeiro_nome}*, acabei de liberar o seu *{nome_upsell_1}* tambem! Voce tomou a {melhor decisao|decisao mais inteligente} para acelerar seus resultados.\n\nComo vi que voce {joga o jogo serio|nao esta para brincadeira e quer velocidade maxima}, quero te fazer um ultimo convite restrito aos alunos avancados:\n\nAcabamos de abrir 5 vagas para o *{nome_upsell_2}* — onde nos entregamos a estrategia avancada de escala + suporte prioritario.\n\n*Exclusivo para quem ja garantiu o Acelerador:*\nAcesse com desconto de aluno VIP aqui: {link_upsell_2}\n\nDa uma olhada sem compromisso. Se fizer sentido para o seu momento atual, te vejo la dentro!",
       ],
       checkoutUrl: "https://checkout.cakto.com.br/upsell-2-masterclass",
     },
@@ -191,7 +186,7 @@ export const CATALOG: Record<ProductType, CatalogItem> = {
         },
       ],
       messagesSpintax: [
-        "Acesso liberado a Masterclass de Escala! Bons estudos e boas vendas, *{{first_name}}*.",
+        "Acesso liberado a Masterclass de Escala! Bons estudos e boas vendas, *{primeiro_nome}*.",
       ],
     },
     nextSteps: [],
@@ -207,15 +202,14 @@ export const CATALOG: Record<ProductType, CatalogItem> = {
       off_downsell_essential: {
         offerId: "off_downsell_essential",
         name: "Templates Essenciais com Desconto",
-        priceCents: 4700,
+        priceCents: 2990,
         checkoutUrl: "https://checkout.cakto.com.br/downsell-essential",
       },
     },
     pitch: {
       audioFileName: "pitch_downsell.ogg",
       messagesSpintax: [
-        "{Oi|Fala}, *{{first_name}}*! Sei que a rotina e corrida e talvez o investimento no pacote completo nao tenha sido no momento ideal.",
-        "Para nao te deixar sem apoio na implementacao, conversei com a equipe e liberamos uma versao essencial com 65% de desconto apenas hoje:\n\nAcesse pelo link oficial: {{checkout_url}}",
+        "{Oi|Fala}, *{primeiro_nome}*! Passando {rapidinho|aqui} para saber se voce ja conseguiu acessar o *{produto}* direitinho! Tudo certo com seu login?\n\nVi que ontem voce acabou nao pegando o nosso pacote acelerador completo. {Eu super entendo|Sei que as vezes o orcamento fica apertado} depois da primeira inscricao.\n\nPor isso, liberei uma *Versao Essencial ({nome_downsell})* — sem a parte avancada, mas com os *modelos principais prontos* para voce nao precisar comecar do zero.\n\nEm vez de R$ 67, voce leva essa versao enxuta hoje por *apenas R$ 29,90* no PIX. E literalmente preco de custo so para voce ter resultado mais rapido!\n\nPara destravar agora no seu painel, e so acessar aqui:\n{link_downsell}\n\nQualquer coisa que precisar no acesso principal, estou por aqui!",
       ],
       checkoutUrl: "https://checkout.cakto.com.br/downsell-essential",
     },
@@ -229,7 +223,7 @@ export const CATALOG: Record<ProductType, CatalogItem> = {
         },
       ],
       messagesSpintax: [
-        "Parabens, *{{first_name}}*! Seu acesso a Versao Essencial dos Templates foi entregue acima.",
+        "Parabens, *{primeiro_nome}*! Seu acesso a Versao Essencial dos Templates foi entregue acima.",
       ],
       microCommitmentQuestion:
         "Tudo certo com o download dos seus templates essenciais?",

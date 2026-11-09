@@ -219,6 +219,7 @@ export class QueueWorker {
 
       const spintaxVariables: Record<string, string> = {
         first_name: firstName,
+        primeiro_nome: firstName,
         name: customer?.name ?? firstName,
         phone: job.phone,
       };

@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { env, validatePort, ensureDataDirectoriesExist } from "./config/env.js";
 import { initDatabase, closeDatabase } from "./database/connection.js";
+import { seedDefaultTemplates } from "./database/repositories.js";
 import {
   initWhatsAppSocket,
   disconnectWhatsApp,
@@ -47,6 +48,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<AppInst
 
   console.log("[System] Conectando ao SQLite (WAL Mode)...");
   initDatabase();
+  seedDefaultTemplates();
 
   // 1. Inicializacao do WhatsApp Baileys
   if (shouldStartWhatsApp) {
