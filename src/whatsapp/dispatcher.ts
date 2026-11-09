@@ -546,12 +546,48 @@ export async function dispatchQueueJob(
 
   if (job.message_type === "AUDIO_PTT" || job.message_type === "audio_ptt") {
     const audioTarget = job.media_path || job.content;
-    result = await sendAudioPtt(sock, targetJid, audioTarget, options);
+    let resolved = path.isAbsolute(audioTarget)
+      ? audioTarget
+      : path.resolve(env.paths.mediaDir, audioTarget);
+    if (!fs.existsSync(resolved)) {
+      resolved = path.resolve(process.cwd(), audioTarget);
+    }
+
+    if (!fs.existsSync(resolved)) {
+      if (options?.auditRepo) {
+        options.auditRepo.log("Dispatcher", "MEDIA_FALLBACK_TEXT", "message_queue", job.id, {
+          level: "WARN",
+          reason: "Audio file not found on disk, falling back to text",
+          media_path: audioTarget,
+        });
+      }
+      result = await sendTextMessage(sock, targetJid, job.content, options);
+    } else {
+      result = await sendAudioPtt(sock, targetJid, audioTarget, options);
+    }
   } else if (job.message_type === "DOCUMENT" || job.message_type === "document") {
     const docPath = job.media_path || job.content;
     const fileName = path.basename(docPath);
     const caption = job.content !== docPath ? job.content : undefined;
-    result = await sendDocumentMessage(sock, targetJid, docPath, fileName, "application/pdf", caption, options);
+    let resolved = path.isAbsolute(docPath)
+      ? docPath
+      : path.resolve(env.paths.mediaDir, docPath);
+    if (!fs.existsSync(resolved)) {
+      resolved = path.resolve(process.cwd(), docPath);
+    }
+
+    if (!fs.existsSync(resolved)) {
+      if (options?.auditRepo) {
+        options.auditRepo.log("Dispatcher", "MEDIA_FALLBACK_TEXT", "message_queue", job.id, {
+          level: "WARN",
+          reason: "Document file not found on disk, falling back to text",
+          media_path: docPath,
+        });
+      }
+      result = await sendTextMessage(sock, targetJid, caption || job.content, options);
+    } else {
+      result = await sendDocumentMessage(sock, targetJid, docPath, fileName, "application/pdf", caption, options);
+    }
   } else {
     result = await sendTextMessage(sock, targetJid, job.content, options);
   }

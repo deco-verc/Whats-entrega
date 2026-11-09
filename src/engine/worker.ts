@@ -256,19 +256,66 @@ export class QueueWorker {
         job.message_type.startsWith("DELIVERY_") && job.media_path?.endsWith(".pdf");
 
       if (isAudio && job.media_path) {
-        dispatchResult = await sendAudioPtt(sock, targetJid, job.media_path, this.dispatchOptions);
+        let resolvedAudio = path.isAbsolute(job.media_path)
+          ? job.media_path
+          : path.resolve(env.paths.mediaDir, job.media_path);
+        if (!fs.existsSync(resolvedAudio)) {
+          resolvedAudio = path.resolve(process.cwd(), job.media_path);
+        }
+
+        if (!fs.existsSync(resolvedAudio)) {
+          this.repos.auditLogs.log(
+            "QueueWorker",
+            "MEDIA_FALLBACK_TEXT",
+            "message_queue",
+            job.id,
+            {
+              level: "WARN",
+              reason: "Audio file not found on disk, falling back to text message",
+              media_path: job.media_path,
+              fallback_content: resolvedContent,
+            }
+          );
+          dispatchResult = await sendTextMessage(sock, targetJid, resolvedContent, this.dispatchOptions);
+        } else {
+          dispatchResult = await sendAudioPtt(sock, targetJid, job.media_path, this.dispatchOptions);
+        }
       } else if (isDocument && job.media_path) {
         const fileName = path.basename(job.media_path);
         const caption = job.content !== job.media_path ? resolvedContent : undefined;
-        dispatchResult = await sendDocumentMessage(
-          sock,
-          targetJid,
-          job.media_path,
-          fileName,
-          "application/pdf",
-          caption,
-          this.dispatchOptions
-        );
+        let resolvedDoc = path.isAbsolute(job.media_path)
+          ? job.media_path
+          : path.resolve(env.paths.mediaDir, job.media_path);
+        if (!fs.existsSync(resolvedDoc)) {
+          resolvedDoc = path.resolve(process.cwd(), job.media_path);
+        }
+
+        if (!fs.existsSync(resolvedDoc)) {
+          this.repos.auditLogs.log(
+            "QueueWorker",
+            "MEDIA_FALLBACK_TEXT",
+            "message_queue",
+            job.id,
+            {
+              level: "WARN",
+              reason: "Document file not found on disk, falling back to text message",
+              media_path: job.media_path,
+              fallback_content: caption || resolvedContent,
+            }
+          );
+          const fallbackText = caption || resolvedContent || `Acesse seu material: ${job.media_path}`;
+          dispatchResult = await sendTextMessage(sock, targetJid, fallbackText, this.dispatchOptions);
+        } else {
+          dispatchResult = await sendDocumentMessage(
+            sock,
+            targetJid,
+            job.media_path,
+            fileName,
+            "application/pdf",
+            caption,
+            this.dispatchOptions
+          );
+        }
       } else {
         dispatchResult = await sendTextMessage(sock, targetJid, resolvedContent, this.dispatchOptions);
       }
