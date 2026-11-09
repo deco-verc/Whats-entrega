@@ -846,22 +846,22 @@ export class TemplateRepository {
       {
         id: "PIX_RECOVERY",
         name: "PIX_RECOVERY",
-        content: "{Ola|Oi|Fala}, *{primeiro_nome}*! Vi que voce gerou o Pix para o *{produto}*, mas ainda nao concluiu o pagamento.\n\nPara nao perder sua vaga e o valor promocional, segue abaixo o seu codigo Pix Copia e Cola:\n\n```{pix_copia_cola}```\n\nAssim que pagar, o sistema libera seu material imediatamente por aqui. Precisa de alguma ajuda?",
-        tags: ["primeiro_nome", "produto", "pix_copia_cola"],
+        content: "{Ola|Oi|Fala}, *{primeiro_nome}*! Vi que voce gerou o Pix para o *{produto}*, mas ainda nao concluiu o pagamento.\n\nPara nao perder sua vaga e o valor promocional, segue abaixo o seu codigo Pix Copia e Cola:\n\n```{pix_code}```\n\nAssim que pagar, o sistema libera seu material imediatamente por aqui. Precisa de alguma ajuda?",
+        tags: ["nome", "primeiro_nome", "produto", "pix_code"],
         media_path: null,
       },
       {
         id: "MAIN_DELIVERY",
         name: "MAIN_DELIVERY",
         content: "{Ola|Oi|Fala}, *{primeiro_nome}*! Parabens pela decisao! Seu pagamento do *{produto}* foi confirmado com sucesso.\n\nAcabei de anexar acima o seu material em PDF para download imediato.\n\nConseguiu abrir o material direitinho? Me responde SIM aqui so para eu confirmar.",
-        tags: ["primeiro_nome", "produto"],
+        tags: ["nome", "primeiro_nome", "produto"],
         media_path: "data/media/guia_definitivo_alta_conversao.pdf",
       },
       {
         id: "UPSELL_1_OFFER",
         name: "UPSELL_1_OFFER",
-        content: "{Escuta|Ouve} esse audio rapidinho de 1 minuto que gravei exclusivamente para voce, *{primeiro_nome}*.\n\nComo voce ja garantiu o metodo principal, liberei uma condicao unica de upgrade para ter acesso aos nossos templates prontos de alta conversao:\n\nAcesse pelo link oficial: {link_pagamento}",
-        tags: ["primeiro_nome", "produto", "link_pagamento"],
+        content: "{Escuta|Ouve} esse audio rapidinho de 1 minuto que gravei exclusivamente para voce, *{primeiro_nome}*.\n\nComo voce ja garantiu o metodo principal, liberei uma condicao unica de upgrade para ter acesso aos nossos templates prontos de alta conversao:\n\nAcesse pelo link oficial: {link}",
+        tags: ["nome", "primeiro_nome", "produto", "link"],
         media_path: "data/media/pitch_upsell_1.ogg",
       },
       {
@@ -874,8 +874,8 @@ export class TemplateRepository {
       {
         id: "DOWNSELL_OFFER",
         name: "DOWNSELL_OFFER",
-        content: "{Oi|Fala}, *{primeiro_nome}*! Sei que a rotina e corrida e talvez o investimento no pacote completo nao tenha sido no momento ideal.\n\nPara nao te deixar sem apoio na implementacao, conversei com a equipe e liberamos uma versao essencial com 65% de desconto apenas hoje:\n\nAcesse pelo link oficial: {link_pagamento}",
-        tags: ["primeiro_nome", "link_pagamento"],
+        content: "{Oi|Fala}, *{primeiro_nome}*! Sei que a rotina e corrida e talvez o investimento no pacote completo nao tenha sido no momento ideal.\n\nPara nao te deixar sem apoio na implementacao, conversei com a equipe e liberamos uma versao essencial com 65% de desconto apenas hoje:\n\nAcesse pelo link oficial: {link}",
+        tags: ["nome", "primeiro_nome", "produto", "link"],
         media_path: "data/media/pitch_downsell.ogg",
       },
       {
@@ -888,8 +888,8 @@ export class TemplateRepository {
       {
         id: "UPSELL_2_OFFER",
         name: "UPSELL_2_OFFER",
-        content: "*{primeiro_nome}*, preparei uma oportunidade final restrita apenas a quem adquiriu o pacote completo.\n\n{Escuta|Confere} o audio explicativo que mandei acima. Se quiser dar o proximo passo na sua operacao, acesse pelo link especial:\n\nAcesse pelo link oficial: {link_pagamento}",
-        tags: ["primeiro_nome", "link_pagamento"],
+        content: "*{primeiro_nome}*, preparei uma oportunidade final restrita apenas a quem adquiriu o pacote completo.\n\n{Escuta|Confere} o audio explicativo que mandei acima. Se quiser dar o proximo passo na sua operacao, acesse pelo link especial:\n\nAcesse pelo link oficial: {link}",
+        tags: ["nome", "primeiro_nome", "produto", "link"],
         media_path: "data/media/pitch_upsell_2.ogg",
       },
       {
@@ -910,6 +910,10 @@ export class TemplateRepository {
     }
 
     return inserted;
+  }
+
+  public seedFunnelTemplates(force = false): number {
+    return this.seedDefaultTemplates(force);
   }
 
   public seedIfEmpty(force = false): number {
@@ -958,6 +962,10 @@ export const templateRepository = repositories.templates;
 
 export function seedDefaultTemplates(repo: TemplateRepository = templateRepository): number {
   return repo.seedDefaultTemplates();
+}
+
+export function seedFunnelTemplates(repo: TemplateRepository = templateRepository, force = false): number {
+  return repo.seedFunnelTemplates(force);
 }
 
 export default repositories;

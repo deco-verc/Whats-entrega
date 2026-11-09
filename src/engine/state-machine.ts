@@ -278,26 +278,24 @@ export class FunnelStateMachine {
         (event.offerId && product.offers[event.offerId]) ||
         product.offers[product.defaultOfferId];
 
-      const templateVars: Record<string, string> = {
-        first_name: firstName,
-        primeiro_nome: firstName,
-        product_name: product.name,
-        produto: product.name,
-        pix_code: event.pixCode,
-        pix_copia_cola: event.pixCode,
-        checkout_url: selectedOffer?.checkoutUrl ?? "",
-        link_checkout: selectedOffer?.checkoutUrl ?? "",
-      };
+      const templateVars = this.buildTemplateVariables({
+        name: customer.name || event.name,
+        firstName,
+        productName: product.name,
+        checkoutUrl: selectedOffer?.checkoutUrl ?? "",
+        pixCode: event.pixCode,
+      });
 
-      const messages = pixConfig?.messagesSpintax ?? [
-        "{Ola|Oi}, *{{first_name}}*! Vi que gerou o Pix para *{{product_name}}*. Segue o codigo Copia e Cola:\n\n```{{pix_code}}```",
-      ];
+      const customTemplate = this.getTemplate("PIX_RECOVERY", [
+        "tpl_pix_recovery",
+        "Recuperação Pix",
+        "Recuperacao de Pix",
+      ]);
 
-      // 4. Enfileirar baloes de recuperacao de Pix com pequeno intervalo entre eles
       let enqueuedCount = 0;
-      messages.forEach((msgTemplate, index) => {
-        const resolvedText = resolveSpintax(msgTemplate, templateVars);
-        const scheduledTime = new Date(baseScheduledAt.getTime() + index * 3000);
+      if (customTemplate && this.repos.templates) {
+        const resolvedText = this.repos.templates.interpolate(customTemplate.content, templateVars);
+        const mediaFullPath = customTemplate.media_path ? resolveMediaFullPath(customTemplate.media_path) : null;
 
         this.repos.messageQueue.enqueue({
           customer_id: customer.id,
@@ -305,10 +303,31 @@ export class FunnelStateMachine {
           jid: customer.jid,
           message_type: "PIX_RECOVERY",
           content: resolvedText,
-          scheduled_at: scheduledTime,
+          media_path: mediaFullPath,
+          scheduled_at: baseScheduledAt,
         });
         enqueuedCount++;
-      });
+      } else {
+        const messages = pixConfig?.messagesSpintax ?? [
+          "{Ola|Oi}, *{{first_name}}*! Vi que gerou o Pix para *{{product_name}}*. Segue o codigo Copia e Cola:\n\n```{{pix_code}}```",
+        ];
+
+        // 4. Enfileirar baloes de recuperacao de Pix com pequeno intervalo entre eles
+        messages.forEach((msgTemplate, index) => {
+          const resolvedText = resolveSpintax(msgTemplate, templateVars);
+          const scheduledTime = new Date(baseScheduledAt.getTime() + index * 3000);
+
+          this.repos.messageQueue.enqueue({
+            customer_id: customer.id,
+            phone: customer.phone,
+            jid: customer.jid,
+            message_type: "PIX_RECOVERY",
+            content: resolvedText,
+            scheduled_at: scheduledTime,
+          });
+          enqueuedCount++;
+        });
+      }
 
       // 5. Auditoria
       this.repos.auditLogs.log(
