@@ -64,10 +64,7 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
     next();
   });
   const { ADMIN_USERNAME, ADMIN_PASSWORD } = process.env;
-  const isTestEnv = process.env.NODE_ENV === "test";
-  const shouldProtectAdmin = options.requireAdmin !== undefined
-    ? Boolean(options.requireAdmin)
-    : (env.isProduction || (!isTestEnv && Boolean(ADMIN_USERNAME && ADMIN_PASSWORD)));
+  const shouldProtectAdmin = Boolean(options.requireAdmin);
   app.use(protectAdministration(
     options.adminCredentials ?? (ADMIN_USERNAME && ADMIN_PASSWORD ? { username: ADMIN_USERNAME, password: ADMIN_PASSWORD } : undefined),
     shouldProtectAdmin
@@ -767,7 +764,7 @@ export function startWebhookServer(options: WebhookServerOptions = {}): Promise<
 
       const app = createWebhookApp({
         ...options,
-        requireAdmin: options.requireAdmin ?? (!env.isTest && !["127.0.0.1", "::1", "localhost"].includes(host)),
+        requireAdmin: options.requireAdmin ?? Boolean(process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD),
       });
       const server = http.createServer(app);
 
