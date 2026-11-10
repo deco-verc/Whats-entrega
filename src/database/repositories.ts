@@ -157,6 +157,43 @@ export interface UpdateTemplateInput {
   readonly media_path?: string | null;
 }
 
+export interface FunnelTrigger {
+  readonly id: string;
+  readonly project_id: string;
+  readonly trigger_key: string;
+  readonly name: string;
+  readonly event_type: string;
+  readonly is_active: number;
+  readonly delay_seconds: number;
+  readonly template_id: string | null;
+  readonly media_path: string | null;
+  readonly created_at: string;
+  readonly updated_at: string;
+  readonly template_name?: string | null;
+  readonly template_content?: string | null;
+}
+
+export interface CreateTriggerInput {
+  readonly id?: string;
+  readonly project_id?: string;
+  readonly trigger_key: string;
+  readonly name: string;
+  readonly event_type: string;
+  readonly is_active?: number;
+  readonly delay_seconds?: number;
+  readonly template_id?: string | null;
+  readonly media_path?: string | null;
+}
+
+export interface UpdateTriggerInput {
+  readonly name?: string;
+  readonly event_type?: string;
+  readonly is_active?: number;
+  readonly delay_seconds?: number;
+  readonly template_id?: string | null;
+  readonly media_path?: string | null;
+}
+
 // ============================================================================
 // Utilitarios de Normalizacao
 // ============================================================================
@@ -1287,6 +1324,244 @@ export class TemplateRepository {
 }
 
 // ============================================================================
+// Repositorio de Gatilhos e Regras do Funil (FunnelTriggerRepository)
+// ============================================================================
+
+export class FunnelTriggerRepository {
+  private readonly db: Database.Database;
+
+  constructor(db: Database.Database = getDatabase()) {
+    this.db = db;
+  }
+
+  public findById(id: string): FunnelTrigger | null {
+    const row = this.db.prepare(`
+      SELECT ft.*, mt.name as template_name, mt.content as template_content
+      FROM funnel_triggers ft
+      LEFT JOIN message_templates mt ON ft.template_id = mt.id
+      WHERE ft.id = ?
+    `).get(id) as FunnelTrigger | undefined;
+    return row ?? null;
+  }
+
+  public findByKey(projectId: string, triggerKey: string): FunnelTrigger | null {
+    const cleanProj = (projectId || "default").trim();
+    const cleanKey = triggerKey.trim();
+    const row = this.db.prepare(`
+      SELECT ft.*, mt.name as template_name, mt.content as template_content
+      FROM funnel_triggers ft
+      LEFT JOIN message_templates mt ON ft.template_id = mt.id
+      WHERE (ft.project_id = ? OR ft.project_id = 'default') AND (ft.trigger_key = ? OR ft.trigger_key = CASE WHEN ? = 'PIX_RECOVERY' THEN 'ABANDONMENT_RECOVERY' WHEN ? = 'ABANDONMENT_RECOVERY' THEN 'PIX_RECOVERY' ELSE ? END)
+      ORDER BY CASE WHEN ft.project_id = ? THEN 0 ELSE 1 END
+      LIMIT 1
+    `).get(cleanProj, cleanKey, cleanKey, cleanKey, cleanKey, cleanProj) as FunnelTrigger | undefined;
+    return row ?? null;
+  }
+
+  public listByProject(projectId?: string): FunnelTrigger[] {
+    const cleanProj = (projectId || "default").trim();
+    if (cleanProj === "all") {
+      return this.db.prepare(`
+        SELECT ft.*, mt.name as template_name, mt.content as template_content
+        FROM funnel_triggers ft
+        LEFT JOIN message_templates mt ON ft.template_id = mt.id
+        ORDER BY ft.created_at ASC
+      `).all() as FunnelTrigger[];
+    }
+    return this.db.prepare(`
+      SELECT ft.*, mt.name as template_name, mt.content as template_content
+      FROM funnel_triggers ft
+      LEFT JOIN message_templates mt ON ft.template_id = mt.id
+      WHERE ft.project_id = ?
+      ORDER BY ft.created_at ASC
+    `).all(cleanProj) as FunnelTrigger[];
+  }
+
+  public create(input: CreateTriggerInput): FunnelTrigger {
+    const id = input.id ?? `trg_${randomUUID()}`;
+    const projectId = input.project_id?.trim() || "default";
+    const isActive = input.is_active !== undefined ? Number(input.is_active) : 1;
+    const delay = input.delay_seconds !== undefined ? Number(input.delay_seconds) : 0;
+
+    const row = this.db.prepare(`
+      INSERT INTO funnel_triggers (
+        id, project_id, trigger_key, name, event_type, is_active, delay_seconds, template_id, media_path, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+      RETURNING *
+    `).get(
+      id,
+      projectId,
+      input.trigger_key.trim(),
+      input.name.trim(),
+      input.event_type.trim(),
+      isActive,
+      delay,
+      input.template_id?.trim() ?? null,
+      input.media_path?.trim() ?? null
+    ) as FunnelTrigger;
+
+    return row;
+  }
+
+  public update(id: string, input: UpdateTriggerInput): FunnelTrigger | null {
+    const existing = this.findById(id);
+    if (!existing) return null;
+
+    const name = input.name !== undefined ? input.name.trim() : existing.name;
+    const eventType = input.event_type !== undefined ? input.event_type.trim() : existing.event_type;
+    const isActive = input.is_active !== undefined ? Number(input.is_active) : existing.is_active;
+    const delay = input.delay_seconds !== undefined ? Number(input.delay_seconds) : existing.delay_seconds;
+    const templateId = input.template_id !== undefined ? (input.template_id ? input.template_id.trim() : null) : existing.template_id;
+    const mediaPath = input.media_path !== undefined ? (input.media_path ? input.media_path.trim() : null) : existing.media_path;
+
+    const updated = this.db.prepare(`
+      UPDATE funnel_triggers
+      SET name = ?,
+          event_type = ?,
+          is_active = ?,
+          delay_seconds = ?,
+          template_id = ?,
+          media_path = ?,
+          updated_at = datetime('now')
+      WHERE id = ?
+      RETURNING *
+    `).get(name, eventType, isActive, delay, templateId, mediaPath, id) as FunnelTrigger;
+
+    return updated;
+  }
+
+  public toggle(id: string): { success: boolean; is_active: number } | null {
+    const existing = this.findById(id);
+    if (!existing) return null;
+
+    const newActive = existing.is_active === 1 ? 0 : 1;
+    this.db.prepare(`
+      UPDATE funnel_triggers
+      SET is_active = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `).run(newActive, id);
+
+    return { success: true, is_active: newActive };
+  }
+
+  public seedDefaultTriggers(projectId = "default", force = false): number {
+    const existing = this.listByProject(projectId);
+    if (!force && existing.length > 0) return 0;
+
+    const defaults: CreateTriggerInput[] = [
+      {
+        id: `trg_${projectId}_abandonment`,
+        project_id: projectId,
+        trigger_key: "ABANDONMENT_RECOVERY",
+        name: "Recuperação de Abandono (Pix e Carrinho)",
+        event_type: "pix_generated",
+        is_active: 1,
+        delay_seconds: 420, // 7 minutos
+        template_id: "PIX_RECOVERY",
+        media_path: null,
+      },
+      {
+        id: `trg_${projectId}_main_delivery`,
+        project_id: projectId,
+        trigger_key: "MAIN_DELIVERY",
+        name: "Entregável do Produto Principal",
+        event_type: "purchase_approved",
+        is_active: 1,
+        delay_seconds: 0, // Imediato
+        template_id: "MAIN_DELIVERY",
+        media_path: "data/media/guia_definitivo_alta_conversao.pdf",
+      },
+      {
+        id: `trg_${projectId}_upsell1_offer`,
+        project_id: projectId,
+        trigger_key: "UPSELL_1_OFFER",
+        name: "Oferta de Upsell 1 (Pitch)",
+        event_type: "purchase_approved",
+        is_active: 1,
+        delay_seconds: 600, // 10 minutos
+        template_id: "UPSELL_1_OFFER",
+        media_path: "data/media/pitch_upsell_1.ogg",
+      },
+      {
+        id: `trg_${projectId}_upsell1_delivery`,
+        project_id: projectId,
+        trigger_key: "UPSELL_1_DELIVERY",
+        name: "Entregável do Upsell 1",
+        event_type: "purchase_approved",
+        is_active: 1,
+        delay_seconds: 0,
+        template_id: "UPSELL_1_DELIVERY",
+        media_path: "data/media/pack_templates_acelerador.pdf",
+      },
+      {
+        id: `trg_${projectId}_upsell2_offer`,
+        project_id: projectId,
+        trigger_key: "UPSELL_2_OFFER",
+        name: "Oferta de Upsell 2 (Pitch Masterclass)",
+        event_type: "purchase_approved",
+        is_active: 1,
+        delay_seconds: 900, // 15 minutos
+        template_id: "UPSELL_2_OFFER",
+        media_path: "data/media/pitch_upsell_2.ogg",
+      },
+      {
+        id: `trg_${projectId}_upsell2_delivery`,
+        project_id: projectId,
+        trigger_key: "UPSELL_2_DELIVERY",
+        name: "Entregável do Upsell 2",
+        event_type: "purchase_approved",
+        is_active: 1,
+        delay_seconds: 0,
+        template_id: "UPSELL_2_DELIVERY",
+        media_path: "data/media/masterclass_escala_acesso.pdf",
+      },
+      {
+        id: `trg_${projectId}_downsell_offer`,
+        project_id: projectId,
+        trigger_key: "DOWNSELL_OFFER",
+        name: "Oferta de Downsell (Condição Especial)",
+        event_type: "customer_reply",
+        is_active: 1,
+        delay_seconds: 300, // 5 minutos
+        template_id: "DOWNSELL_OFFER",
+        media_path: "data/media/pitch_downsell.ogg",
+      },
+      {
+        id: `trg_${projectId}_downsell_delivery`,
+        project_id: projectId,
+        trigger_key: "DOWNSELL_DELIVERY",
+        name: "Entregável do Downsell",
+        event_type: "purchase_approved",
+        is_active: 1,
+        delay_seconds: 0,
+        template_id: "DOWNSELL_DELIVERY",
+        media_path: "data/media/pack_templates_essenciais.pdf",
+      },
+    ];
+
+    let inserted = 0;
+    for (const def of defaults) {
+      const existingTrg = this.findByKey(projectId, def.trigger_key);
+      if (!existingTrg) {
+        this.create(def);
+        inserted++;
+      } else if (force) {
+        this.update(existingTrg.id, {
+          name: def.name,
+          event_type: def.event_type,
+          delay_seconds: def.delay_seconds,
+          template_id: def.template_id,
+          media_path: def.media_path,
+        });
+        inserted++;
+      }
+    }
+    return inserted;
+  }
+}
+
+// ============================================================================
 // Helper de Transacoes e Fabrica de Repositorios
 // ============================================================================
 
@@ -1298,6 +1573,7 @@ export interface Repositories {
   readonly auditLogs: AuditLogRepository;
   readonly templates: TemplateRepository;
   readonly projects: ProjectRepository;
+  readonly funnelTriggers: FunnelTriggerRepository;
   readonly transaction: <T>(fn: () => T) => T;
 }
 
@@ -1310,6 +1586,7 @@ export function createRepositories(db: Database.Database = getDatabase()): Repos
     auditLogs: new AuditLogRepository(db),
     templates: new TemplateRepository(db),
     projects: new ProjectRepository(db),
+    funnelTriggers: new FunnelTriggerRepository(db),
     transaction: <T>(fn: () => T): T => db.transaction(fn)(),
   };
 }
@@ -1325,6 +1602,7 @@ export const messageQueueRepository = repositories.messageQueue;
 export const auditLogRepository = repositories.auditLogs;
 export const templateRepository = repositories.templates;
 export const projectRepository = repositories.projects;
+export const funnelTriggerRepository = repositories.funnelTriggers;
 
 export function seedDefaultTemplates(repo: TemplateRepository = templateRepository): number {
   return repo.seedDefaultTemplates();
@@ -1332,6 +1610,10 @@ export function seedDefaultTemplates(repo: TemplateRepository = templateReposito
 
 export function seedFunnelTemplates(repo: TemplateRepository = templateRepository, force = false): number {
   return repo.seedFunnelTemplates(force);
+}
+
+export function seedDefaultTriggers(repo: FunnelTriggerRepository = funnelTriggerRepository, projectId = "default"): number {
+  return repo.seedDefaultTriggers(projectId);
 }
 
 export default repositories;

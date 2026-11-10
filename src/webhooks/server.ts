@@ -11,7 +11,8 @@ import type { WASocket } from "@whiskeysockets/baileys";
 import { handleManualSend } from "../routes/manual-send.js";
 import { createTemplatesRouter } from "../routes/templates.js";
 import { createProjectsRouter } from "../routes/projects.js";
-import { TemplateRepository, ProjectRepository, MessageQueueRepository } from "../database/repositories.js";
+import { createTriggersRouter } from "../routes/triggers.js";
+import { TemplateRepository, ProjectRepository, MessageQueueRepository, FunnelTriggerRepository } from "../database/repositories.js";
 import {
   getWhatsAppConnectionStatus,
   getWhatsAppConnectionState,
@@ -342,6 +343,14 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
       templateRepo: effectiveTemplateRepo,
       customerRepo: options.repositories?.customerRepo,
       orderRepo: options.repositories?.orderRepo,
+    })
+  );
+
+  // Gestao de Gatilhos e Regras de Automacao (src/routes/triggers.ts)
+  app.use(
+    "/api/triggers",
+    createTriggersRouter({
+      triggerRepo: options.repositories?.funnelTriggers,
     })
   );
 

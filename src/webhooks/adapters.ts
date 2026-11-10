@@ -8,6 +8,8 @@ import {
   OrderRepository,
   AuditLogRepository,
   TemplateRepository,
+  FunnelTriggerRepository,
+  ProjectRepository,
   type Customer,
   type Order,
 } from "../database/repositories.js";
@@ -292,6 +294,8 @@ export interface ProcessWebhookRepositories {
   readonly orderRepo?: OrderRepository;
   readonly auditRepo?: AuditLogRepository;
   readonly templateRepo?: TemplateRepository;
+  readonly funnelTriggers?: FunnelTriggerRepository;
+  readonly projectRepo?: ProjectRepository;
 }
 
 /**

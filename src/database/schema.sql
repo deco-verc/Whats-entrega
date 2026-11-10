@@ -121,3 +121,24 @@ CREATE TABLE IF NOT EXISTS message_templates (
 
 CREATE INDEX IF NOT EXISTS idx_message_templates_name ON message_templates (name);
 CREATE INDEX IF NOT EXISTS idx_message_templates_project_id ON message_templates (project_id);
+
+-- 6. Tabela de Gatilhos e Regras de Automacao do Funil (Event Triggers & Automation Controls)
+CREATE TABLE IF NOT EXISTS funnel_triggers (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL DEFAULT 'default',
+  trigger_key TEXT NOT NULL,
+  name TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  delay_seconds INTEGER NOT NULL DEFAULT 0,
+  template_id TEXT,
+  media_path TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE,
+  FOREIGN KEY (template_id) REFERENCES message_templates (id) ON DELETE SET NULL,
+  CONSTRAINT uq_funnel_triggers_proj_key UNIQUE (project_id, trigger_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_funnel_triggers_project ON funnel_triggers (project_id);
+CREATE INDEX IF NOT EXISTS idx_funnel_triggers_event ON funnel_triggers (event_type);

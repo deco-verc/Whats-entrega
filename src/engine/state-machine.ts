@@ -273,14 +273,46 @@ export class FunnelStateMachine {
         };
       }
 
-      // 3. Localizar configuracao do produto no catalogo
+      // 3. Verificar configuracao de gatilhos do projeto (funnel_triggers)
+      const trigger = this.repos.funnelTriggers?.findByKey(targetProjectId, "ABANDONMENT_RECOVERY");
+
+      // Se o gatilho estiver explicitamente desativado pelo usuario, aborta enfileiramento
+      if (trigger && trigger.is_active === 0) {
+        this.repos.auditLogs.log(
+          "FunnelStateMachine",
+          "TRIGGER_DISABLED",
+          "customer",
+          customer.id,
+          {
+            trigger_key: "ABANDONMENT_RECOVERY",
+            project_id: targetProjectId,
+            message: "Disparo de Recuperacao de Abandono (Pix) desativado pelo usuario.",
+          }
+        );
+
+        return {
+          success: true,
+          customerId: customer.id,
+          previousState,
+          newState: customer.current_state,
+          event: "pix_generated",
+          enqueuedJobsCount: 0,
+          cancelledJobsCount: 0,
+          rescheduledJobsCount: 0,
+          orderId: orderResult.order.id,
+          duplicated: false,
+          details: "Gatilho de Recuperacao de Abandono desativado para este projeto.",
+        };
+      }
+
+      // 4. Localizar configuracao do produto no catalogo
       const product =
         (event.productId && getProductById(event.productId)) ||
         (event.offerId && getProductByOfferId(event.offerId)) ||
         CATALOG.MAIN;
 
       const pixConfig = product.pixRecovery ?? CATALOG.MAIN.pixRecovery;
-      const delaySeconds = pixConfig?.delaySeconds ?? 420; // 7 minutos
+      const delaySeconds = trigger?.delay_seconds !== undefined ? trigger.delay_seconds : (pixConfig?.delaySeconds ?? 420);
       const baseScheduledAt = new Date(Date.now() + delaySeconds * 1000);
 
       // Variaveis de Spintax
@@ -296,16 +328,21 @@ export class FunnelStateMachine {
         pixCode: event.pixCode,
       });
 
-      const customTemplate = this.getTemplate("PIX_RECOVERY", [
-        "tpl_pix_recovery",
-        "Recuperação Pix",
-        "Recuperacao de Pix",
-      ]);
+      const customTemplate =
+        (trigger?.template_id ? this.repos.templates?.findById(trigger.template_id) : null) ??
+        this.getTemplate("PIX_RECOVERY", [
+          "ABANDONMENT_RECOVERY",
+          "tpl_pix_recovery",
+          "Recuperação Pix",
+          "Recuperacao de Pix",
+        ], targetProjectId);
 
       let enqueuedCount = 0;
       if (customTemplate && this.repos.templates) {
         const resolvedText = this.repos.templates.interpolate(customTemplate.content, templateVars);
-        const mediaFullPath = customTemplate.media_path ? resolveMediaFullPath(customTemplate.media_path) : null;
+        const mediaFullPath = trigger?.media_path
+          ? resolveMediaFullPath(trigger.media_path)
+          : (customTemplate.media_path ? resolveMediaFullPath(customTemplate.media_path) : null);
 
         this.repos.messageQueue.enqueue({
           customer_id: customer.id,
@@ -315,6 +352,7 @@ export class FunnelStateMachine {
           content: resolvedText,
           media_path: mediaFullPath,
           scheduled_at: baseScheduledAt,
+          project_id: targetProjectId,
         });
         enqueuedCount++;
       } else {
@@ -334,6 +372,7 @@ export class FunnelStateMachine {
             message_type: "PIX_RECOVERY",
             content: resolvedText,
             scheduled_at: scheduledTime,
+            project_id: targetProjectId,
           });
           enqueuedCount++;
         });
@@ -478,7 +517,11 @@ export class FunnelStateMachine {
         // 2. Atualiza estado para DELIVERED_MAIN
         this.repos.customers.updateState(customer.id, newState);
 
-        // 3. Agenda DELIVERY_MAIN imediato
+        // 3. Agenda DELIVERY_MAIN se o gatilho estiver ativo
+        const triggerMain = this.repos.funnelTriggers?.findByKey(targetProjectId, "MAIN_DELIVERY");
+        const mainActive = triggerMain ? triggerMain.is_active === 1 : true;
+        const mainDelay = triggerMain?.delay_seconds ?? 0;
+
         const selectedOffer =
           (event.offerId && catalogItem.offers[event.offerId]) ||
           catalogItem.offers[catalogItem.defaultOfferId];
@@ -497,291 +540,334 @@ export class FunnelStateMachine {
 
         let messageStep = 0;
 
-        const customDelivery = this.getTemplate("MAIN_DELIVERY", [
-          "DELIVERY_MAIN",
-          "tpl_welcome_delivery",
-          "tpl_main_delivery",
-          "Entrega Produto Principal",
-        ]);
+        const customDelivery =
+          (triggerMain?.template_id ? this.repos.templates?.findById(triggerMain.template_id) : null) ??
+          this.getTemplate("MAIN_DELIVERY", [
+            "DELIVERY_MAIN",
+            "tpl_welcome_delivery",
+            "tpl_main_delivery",
+            "Entrega Produto Principal",
+          ], targetProjectId);
 
-        if (customDelivery && this.repos.templates) {
-          const content = this.repos.templates.interpolate(customDelivery.content, templateVars);
-          const mediaFullPath = customDelivery.media_path
-            ? resolveMediaFullPath(customDelivery.media_path)
-            : (catalogItem.delivery.mediaFiles[0] ? resolveMediaFullPath(catalogItem.delivery.mediaFiles[0].fileName) : null);
+        if (mainActive) {
+          const deliveryBaseTime = new Date(now.getTime() + mainDelay * 1000);
 
-          // 1. Balao textual de boas-vindas e entrega interpolado do template
-          this.repos.messageQueue.enqueue({
-            customer_id: customer.id,
-            phone: customer.phone,
-            jid: customer.jid,
-            message_type: "DELIVERY_MAIN",
-            content,
-            scheduled_at: new Date(now.getTime() + messageStep * 3000),
-          });
-          enqueuedCount++;
-          messageStep++;
+          if (customDelivery && this.repos.templates) {
+            const content = this.repos.templates.interpolate(customDelivery.content, templateVars);
+            const mediaFullPath = triggerMain?.media_path
+              ? resolveMediaFullPath(triggerMain.media_path)
+              : (customDelivery.media_path
+                ? resolveMediaFullPath(customDelivery.media_path)
+                : (catalogItem.delivery.mediaFiles[0] ? resolveMediaFullPath(catalogItem.delivery.mediaFiles[0].fileName) : null));
 
-          // 2. Anexo PDF do material principal
-          if (mediaFullPath) {
-            this.repos.messageQueue.enqueue({
-              customer_id: customer.id,
-              phone: customer.phone,
-              jid: customer.jid,
-              message_type: "DELIVERY_MAIN",
-              content: catalogItem.delivery.mediaFiles[0]?.caption || path.basename(mediaFullPath),
-              media_path: mediaFullPath,
-              scheduled_at: new Date(now.getTime() + messageStep * 3000),
-            });
-            enqueuedCount++;
-            messageStep++;
-          }
-
-          // 3. Pergunta de micro-comprometimento
-          const microQuestion =
-            catalogItem.delivery.microCommitmentQuestion ??
-            "Conseguiu abrir o material? Me responde SIM";
-          const resolvedQuestion = resolveSpintax(microQuestion, templateVars);
-
-          this.repos.messageQueue.enqueue({
-            customer_id: customer.id,
-            phone: customer.phone,
-            jid: customer.jid,
-            message_type: "DELIVERY_MAIN",
-            content: resolvedQuestion,
-            scheduled_at: new Date(now.getTime() + messageStep * 3000),
-          });
-          enqueuedCount++;
-        } else {
-          // Baloes de texto de entrega
-          for (const msgTemplate of catalogItem.delivery.messagesSpintax) {
-            const content = resolveSpintax(msgTemplate, templateVars);
+            // 1. Balao textual de boas-vindas e entrega interpolado do template
             this.repos.messageQueue.enqueue({
               customer_id: customer.id,
               phone: customer.phone,
               jid: customer.jid,
               message_type: "DELIVERY_MAIN",
               content,
-              scheduled_at: new Date(now.getTime() + messageStep * 3000),
+              scheduled_at: new Date(deliveryBaseTime.getTime() + messageStep * 3000),
+              project_id: targetProjectId,
             });
             enqueuedCount++;
             messageStep++;
-          }
 
-          // Anexo PDF do material principal
-          for (const media of catalogItem.delivery.mediaFiles) {
-            const mediaFullPath = resolveMediaFullPath(media.fileName);
-            const caption = media.caption ? resolveSpintax(media.caption, templateVars) : undefined;
+            // 2. Anexo PDF do material principal
+            if (mediaFullPath) {
+              this.repos.messageQueue.enqueue({
+                customer_id: customer.id,
+                phone: customer.phone,
+                jid: customer.jid,
+                message_type: "DELIVERY_MAIN",
+                content: catalogItem.delivery.mediaFiles[0]?.caption || path.basename(mediaFullPath),
+                media_path: mediaFullPath,
+                scheduled_at: new Date(deliveryBaseTime.getTime() + messageStep * 3000),
+                project_id: targetProjectId,
+              });
+              enqueuedCount++;
+              messageStep++;
+            }
+
+            // 3. Pergunta de micro-comprometimento
+            const microQuestion =
+              catalogItem.delivery.microCommitmentQuestion ??
+              "Conseguiu abrir o material? Me responde SIM";
+            const resolvedQuestion = resolveSpintax(microQuestion, templateVars);
 
             this.repos.messageQueue.enqueue({
               customer_id: customer.id,
               phone: customer.phone,
               jid: customer.jid,
               message_type: "DELIVERY_MAIN",
-              content: caption || media.fileName,
-              media_path: mediaFullPath,
-              scheduled_at: new Date(now.getTime() + messageStep * 3000),
+              content: resolvedQuestion,
+              scheduled_at: new Date(deliveryBaseTime.getTime() + messageStep * 3000),
+              project_id: targetProjectId,
             });
             enqueuedCount++;
-            messageStep++;
+          } else {
+            // Baloes de texto de entrega
+            for (const msgTemplate of catalogItem.delivery.messagesSpintax) {
+              const content = resolveSpintax(msgTemplate, templateVars);
+              this.repos.messageQueue.enqueue({
+                customer_id: customer.id,
+                phone: customer.phone,
+                jid: customer.jid,
+                message_type: "DELIVERY_MAIN",
+                content,
+                scheduled_at: new Date(deliveryBaseTime.getTime() + messageStep * 3000),
+                project_id: targetProjectId,
+              });
+              enqueuedCount++;
+              messageStep++;
+            }
+
+            // Anexo PDF do material principal
+            for (const media of catalogItem.delivery.mediaFiles) {
+              const mediaFullPath = resolveMediaFullPath(media.fileName);
+              const caption = media.caption ? resolveSpintax(media.caption, templateVars) : undefined;
+
+              this.repos.messageQueue.enqueue({
+                customer_id: customer.id,
+                phone: customer.phone,
+                jid: customer.jid,
+                message_type: "DELIVERY_MAIN",
+                content: caption || media.fileName,
+                media_path: mediaFullPath,
+                scheduled_at: new Date(deliveryBaseTime.getTime() + messageStep * 3000),
+                project_id: targetProjectId,
+              });
+              enqueuedCount++;
+              messageStep++;
+            }
+
+            // Ultimo balao: Pergunta de micro-comprometimento
+            const microQuestion =
+              catalogItem.delivery.microCommitmentQuestion ??
+              "Conseguiu abrir o material? Me responde SIM";
+            const resolvedQuestion = resolveSpintax(microQuestion, templateVars);
+
+            this.repos.messageQueue.enqueue({
+              customer_id: customer.id,
+              phone: customer.phone,
+              jid: customer.jid,
+              message_type: "DELIVERY_MAIN",
+              content: resolvedQuestion,
+              scheduled_at: new Date(deliveryBaseTime.getTime() + messageStep * 3000),
+              project_id: targetProjectId,
+            });
+            enqueuedCount++;
           }
-
-          // Ultimo balao: Pergunta de micro-comprometimento
-          const microQuestion =
-            catalogItem.delivery.microCommitmentQuestion ??
-            "Conseguiu abrir o material? Me responde SIM";
-          const resolvedQuestion = resolveSpintax(microQuestion, templateVars);
-
-          this.repos.messageQueue.enqueue({
-            customer_id: customer.id,
-            phone: customer.phone,
-            jid: customer.jid,
-            message_type: "DELIVERY_MAIN",
-            content: resolvedQuestion,
-            scheduled_at: new Date(now.getTime() + messageStep * 3000),
-          });
-          enqueuedCount++;
         }
 
-        // 4. Agenda PITCH_UPSELL_1 para now + 15min
+        // 4. Agenda PITCH_UPSELL_1 se o gatilho estiver ativo
+        const triggerUpsell1 = this.repos.funnelTriggers?.findByKey(targetProjectId, "UPSELL_1_OFFER");
+        const upsell1Active = triggerUpsell1 ? triggerUpsell1.is_active === 1 : true;
         const upsell1Config = CATALOG.UPSELL_1;
-        const nextStepDelay = catalogItem.nextSteps[0]?.delaySeconds ?? 900; // 15min
-        const scheduledUpsell1 = new Date(now.getTime() + nextStepDelay * 1000);
+        const nextStepDelay = triggerUpsell1?.delay_seconds !== undefined
+          ? triggerUpsell1.delay_seconds
+          : (catalogItem.nextSteps[0]?.delaySeconds ?? 900); // 15min
 
-        const upsell1Offer =
-          upsell1Config.offers[upsell1Config.defaultOfferId] ??
-          Object.values(upsell1Config.offers)[0];
+        if (upsell1Active) {
+          const scheduledUpsell1 = new Date(now.getTime() + nextStepDelay * 1000);
 
-        const upsellVars = this.buildTemplateVariables({
-          name: customer.name || event.name,
-          firstName,
-          productName: catalogItem.name,
-          checkoutUrl: upsell1Config.pitch?.checkoutUrl ?? upsell1Offer.checkoutUrl,
-          extra: {
-            nome_upsell_1: upsell1Config.name,
-            upsell_1_name: upsell1Config.name,
-            link_upsell_1: upsell1Config.pitch?.checkoutUrl ?? upsell1Offer.checkoutUrl,
-            upsell_1_link: upsell1Config.pitch?.checkoutUrl ?? upsell1Offer.checkoutUrl,
-            link_checkout: upsell1Config.pitch?.checkoutUrl ?? upsell1Offer.checkoutUrl,
-          },
-        });
+          const upsell1Offer =
+            upsell1Config.offers[upsell1Config.defaultOfferId] ??
+            Object.values(upsell1Config.offers)[0];
 
-        const customUpsell1 = this.getTemplate("UPSELL_1_OFFER", [
-          "PITCH_UPSELL_1",
-          "tpl_upsell_pitch",
-          "tpl_upsell_1_pitch",
-          "Script de UPSELL 1",
-        ]);
-
-        if (customUpsell1 && this.repos.templates) {
-          const mediaFullPath = customUpsell1.media_path
-            ? resolveMediaFullPath(customUpsell1.media_path)
-            : (upsell1Config.pitch?.audioFileName ? resolveMediaFullPath(upsell1Config.pitch.audioFileName) : null);
-
-          // 1. Audio PTT se configurado no template ou catalogo
-          if (mediaFullPath) {
-            this.repos.messageQueue.enqueue({
-              customer_id: customer.id,
-              phone: customer.phone,
-              jid: customer.jid,
-              message_type: "PITCH_UPSELL_1",
-              content: `Audio PTT: ${upsell1Config.name}`,
-              media_path: mediaFullPath,
-              scheduled_at: scheduledUpsell1,
-            });
-            enqueuedCount++;
-          }
-
-          // 2. Balao textual com oferta e link de checkout interpolados
-          const pitchContent = this.repos.templates.interpolate(customUpsell1.content, upsellVars);
-          this.repos.messageQueue.enqueue({
-            customer_id: customer.id,
-            phone: customer.phone,
-            jid: customer.jid,
-            message_type: "PITCH_UPSELL_1",
-            content: pitchContent,
-            scheduled_at: new Date(scheduledUpsell1.getTime() + (mediaFullPath ? 3000 : 0)),
+          const upsellVars = this.buildTemplateVariables({
+            name: customer.name || event.name,
+            firstName,
+            productName: catalogItem.name,
+            checkoutUrl: upsell1Config.pitch?.checkoutUrl ?? upsell1Offer.checkoutUrl,
+            extra: {
+              nome_upsell_1: upsell1Config.name,
+              upsell_1_name: upsell1Config.name,
+              link_upsell_1: upsell1Config.pitch?.checkoutUrl ?? upsell1Offer.checkoutUrl,
+              upsell_1_link: upsell1Config.pitch?.checkoutUrl ?? upsell1Offer.checkoutUrl,
+              link_checkout: upsell1Config.pitch?.checkoutUrl ?? upsell1Offer.checkoutUrl,
+            },
           });
-          enqueuedCount++;
-        } else {
-          // Pitch de áudio PTT do Upsell 1
-          if (upsell1Config.pitch?.audioFileName) {
-            this.repos.messageQueue.enqueue({
-              customer_id: customer.id,
-              phone: customer.phone,
-              jid: customer.jid,
-              message_type: "PITCH_UPSELL_1",
-              content: `Audio PTT: ${upsell1Config.name}`,
-              media_path: resolveMediaFullPath(upsell1Config.pitch.audioFileName),
-              scheduled_at: scheduledUpsell1,
-            });
-            enqueuedCount++;
-          }
 
-          // Mensagens de texto com o link de checkout do Upsell 1
-          if (upsell1Config.pitch?.messagesSpintax) {
-            upsell1Config.pitch.messagesSpintax.forEach((pitchMsg, pIdx) => {
-              const pitchContent = resolveSpintax(pitchMsg, upsellVars);
+          const customUpsell1 =
+            (triggerUpsell1?.template_id ? this.repos.templates?.findById(triggerUpsell1.template_id) : null) ??
+            this.getTemplate("UPSELL_1_OFFER", [
+              "PITCH_UPSELL_1",
+              "tpl_upsell_pitch",
+              "tpl_upsell_1_pitch",
+              "Script de UPSELL 1",
+            ], targetProjectId);
+
+          if (customUpsell1 && this.repos.templates) {
+            const mediaFullPath = triggerUpsell1?.media_path
+              ? resolveMediaFullPath(triggerUpsell1.media_path)
+              : (customUpsell1.media_path
+                ? resolveMediaFullPath(customUpsell1.media_path)
+                : (upsell1Config.pitch?.audioFileName ? resolveMediaFullPath(upsell1Config.pitch.audioFileName) : null));
+
+            // 1. Audio PTT se configurado no template ou catalogo
+            if (mediaFullPath) {
               this.repos.messageQueue.enqueue({
                 customer_id: customer.id,
                 phone: customer.phone,
                 jid: customer.jid,
                 message_type: "PITCH_UPSELL_1",
-                content: pitchContent,
-                scheduled_at: new Date(scheduledUpsell1.getTime() + (pIdx + 1) * 3000),
+                content: `Audio PTT: ${upsell1Config.name}`,
+                media_path: mediaFullPath,
+                scheduled_at: scheduledUpsell1,
+                project_id: targetProjectId,
               });
               enqueuedCount++;
+            }
+
+            // 2. Balao textual com oferta e link de checkout interpolados
+            const pitchContent = this.repos.templates.interpolate(customUpsell1.content, upsellVars);
+            this.repos.messageQueue.enqueue({
+              customer_id: customer.id,
+              phone: customer.phone,
+              jid: customer.jid,
+              message_type: "PITCH_UPSELL_1",
+              content: pitchContent,
+              scheduled_at: new Date(scheduledUpsell1.getTime() + (mediaFullPath ? 3000 : 0)),
+              project_id: targetProjectId,
             });
+            enqueuedCount++;
+          } else {
+            // Pitch de áudio PTT do Upsell 1
+            if (upsell1Config.pitch?.audioFileName) {
+              this.repos.messageQueue.enqueue({
+                customer_id: customer.id,
+                phone: customer.phone,
+                jid: customer.jid,
+                message_type: "PITCH_UPSELL_1",
+                content: `Audio PTT: ${upsell1Config.name}`,
+                media_path: resolveMediaFullPath(upsell1Config.pitch.audioFileName),
+                scheduled_at: scheduledUpsell1,
+                project_id: targetProjectId,
+              });
+              enqueuedCount++;
+            }
+
+            // Mensagens de texto com o link de checkout do Upsell 1
+            if (upsell1Config.pitch?.messagesSpintax) {
+              upsell1Config.pitch.messagesSpintax.forEach((pitchMsg, pIdx) => {
+                const pitchContent = resolveSpintax(pitchMsg, upsellVars);
+                this.repos.messageQueue.enqueue({
+                  customer_id: customer.id,
+                  phone: customer.phone,
+                  jid: customer.jid,
+                  message_type: "PITCH_UPSELL_1",
+                  content: pitchContent,
+                  scheduled_at: new Date(scheduledUpsell1.getTime() + (pIdx + 1) * 3000),
+                  project_id: targetProjectId,
+                });
+                enqueuedCount++;
+              });
+            }
           }
         }
 
-        // 5. Downsell por tempo: já agenda PITCH_DOWNSELL_1 para now + 2 horas caso não compre o UPSELL_1
-        const downsellDelay =
-          nextStepDelay + (upsell1Config.downsellStep?.delaySeconds ?? 7200); // 15min + 2h
-        const scheduledDownsell = new Date(now.getTime() + downsellDelay * 1000);
+        // 5. Downsell por tempo: agenda PITCH_DOWNSELL_1 se o gatilho estiver ativo
+        const triggerDownsell = this.repos.funnelTriggers?.findByKey(targetProjectId, "DOWNSELL_OFFER");
+        const downsellActive = triggerDownsell ? triggerDownsell.is_active === 1 : true;
+        const downsellDelay = triggerDownsell?.delay_seconds !== undefined
+          ? triggerDownsell.delay_seconds
+          : (nextStepDelay + (upsell1Config.downsellStep?.delaySeconds ?? 7200)); // 15min + 2h
 
-        const downsellConfig = CATALOG.DOWNSELL;
-        const downsellOffer =
-          downsellConfig.offers[downsellConfig.defaultOfferId] ??
-          Object.values(downsellConfig.offers)[0];
+        if (downsellActive) {
+          const scheduledDownsell = new Date(now.getTime() + downsellDelay * 1000);
 
-        const downsellVars = this.buildTemplateVariables({
-          name: customer.name || event.name,
-          firstName,
-          productName: catalogItem.name,
-          checkoutUrl: downsellConfig.pitch?.checkoutUrl ?? downsellOffer.checkoutUrl,
-          extra: {
-            nome_downsell: downsellConfig.name,
-            downsell_name: downsellConfig.name,
-            link_downsell: downsellConfig.pitch?.checkoutUrl ?? downsellOffer.checkoutUrl,
-            downsell_link: downsellConfig.pitch?.checkoutUrl ?? downsellOffer.checkoutUrl,
-            link_checkout: downsellConfig.pitch?.checkoutUrl ?? downsellOffer.checkoutUrl,
-          },
-        });
+          const downsellConfig = CATALOG.DOWNSELL;
+          const downsellOffer =
+            downsellConfig.offers[downsellConfig.defaultOfferId] ??
+            Object.values(downsellConfig.offers)[0];
 
-        const customDownsell = this.getTemplate("DOWNSELL_OFFER", [
-          "PITCH_DOWNSELL_1",
-          "tpl_downsell_offer",
-          "Script de DOWNSELL",
-        ]);
-
-        if (customDownsell && this.repos.templates) {
-          const mediaFullPath = customDownsell.media_path
-            ? resolveMediaFullPath(customDownsell.media_path)
-            : (downsellConfig.pitch?.audioFileName ? resolveMediaFullPath(downsellConfig.pitch.audioFileName) : null);
-
-          // 1. Audio PTT se configurado
-          if (mediaFullPath) {
-            this.repos.messageQueue.enqueue({
-              customer_id: customer.id,
-              phone: customer.phone,
-              jid: customer.jid,
-              message_type: "PITCH_DOWNSELL_1",
-              content: `Audio PTT Downsell: ${downsellConfig.name}`,
-              media_path: mediaFullPath,
-              scheduled_at: scheduledDownsell,
-            });
-            enqueuedCount++;
-          }
-
-          // 2. Balao textual com oferta de downsell e link interpolados
-          const downContent = this.repos.templates.interpolate(customDownsell.content, downsellVars);
-          this.repos.messageQueue.enqueue({
-            customer_id: customer.id,
-            phone: customer.phone,
-            jid: customer.jid,
-            message_type: "PITCH_DOWNSELL_1",
-            content: downContent,
-            scheduled_at: new Date(scheduledDownsell.getTime() + (mediaFullPath ? 3000 : 0)),
+          const downsellVars = this.buildTemplateVariables({
+            name: customer.name || event.name,
+            firstName,
+            productName: catalogItem.name,
+            checkoutUrl: downsellConfig.pitch?.checkoutUrl ?? downsellOffer.checkoutUrl,
+            extra: {
+              nome_downsell: downsellConfig.name,
+              downsell_name: downsellConfig.name,
+              link_downsell: downsellConfig.pitch?.checkoutUrl ?? downsellOffer.checkoutUrl,
+              downsell_link: downsellConfig.pitch?.checkoutUrl ?? downsellOffer.checkoutUrl,
+              link_checkout: downsellConfig.pitch?.checkoutUrl ?? downsellOffer.checkoutUrl,
+            },
           });
-          enqueuedCount++;
-        } else {
-          if (downsellConfig.pitch?.audioFileName) {
-            this.repos.messageQueue.enqueue({
-              customer_id: customer.id,
-              phone: customer.phone,
-              jid: customer.jid,
-              message_type: "PITCH_DOWNSELL_1",
-              content: `Audio PTT Downsell: ${downsellConfig.name}`,
-              media_path: resolveMediaFullPath(downsellConfig.pitch.audioFileName),
-              scheduled_at: scheduledDownsell,
-            });
-            enqueuedCount++;
-          }
 
-          if (downsellConfig.pitch?.messagesSpintax) {
-            downsellConfig.pitch.messagesSpintax.forEach((downMsg, dIdx) => {
-              const downContent = resolveSpintax(downMsg, downsellVars);
+          const customDownsell =
+            (triggerDownsell?.template_id ? this.repos.templates?.findById(triggerDownsell.template_id) : null) ??
+            this.getTemplate("DOWNSELL_OFFER", [
+              "PITCH_DOWNSELL_1",
+              "tpl_downsell_offer",
+              "Script de DOWNSELL",
+            ], targetProjectId);
+
+          if (customDownsell && this.repos.templates) {
+            const mediaFullPath = triggerDownsell?.media_path
+              ? resolveMediaFullPath(triggerDownsell.media_path)
+              : (customDownsell.media_path
+                ? resolveMediaFullPath(customDownsell.media_path)
+                : (downsellConfig.pitch?.audioFileName ? resolveMediaFullPath(downsellConfig.pitch.audioFileName) : null));
+
+            // 1. Audio PTT se configurado
+            if (mediaFullPath) {
               this.repos.messageQueue.enqueue({
                 customer_id: customer.id,
                 phone: customer.phone,
                 jid: customer.jid,
                 message_type: "PITCH_DOWNSELL_1",
-                content: downContent,
-                scheduled_at: new Date(scheduledDownsell.getTime() + (dIdx + 1) * 3000),
+                content: `Audio PTT Downsell: ${downsellConfig.name}`,
+                media_path: mediaFullPath,
+                scheduled_at: scheduledDownsell,
+                project_id: targetProjectId,
               });
               enqueuedCount++;
+            }
+
+            // 2. Balao textual com oferta de downsell e link interpolados
+            const downContent = this.repos.templates.interpolate(customDownsell.content, downsellVars);
+            this.repos.messageQueue.enqueue({
+              customer_id: customer.id,
+              phone: customer.phone,
+              jid: customer.jid,
+              message_type: "PITCH_DOWNSELL_1",
+              content: downContent,
+              scheduled_at: new Date(scheduledDownsell.getTime() + (mediaFullPath ? 3000 : 0)),
+              project_id: targetProjectId,
             });
+            enqueuedCount++;
+          } else {
+            if (downsellConfig.pitch?.audioFileName) {
+              this.repos.messageQueue.enqueue({
+                customer_id: customer.id,
+                phone: customer.phone,
+                jid: customer.jid,
+                message_type: "PITCH_DOWNSELL_1",
+                content: `Audio PTT Downsell: ${downsellConfig.name}`,
+                media_path: resolveMediaFullPath(downsellConfig.pitch.audioFileName),
+                scheduled_at: scheduledDownsell,
+                project_id: targetProjectId,
+              });
+              enqueuedCount++;
+            }
+
+            if (downsellConfig.pitch?.messagesSpintax) {
+              downsellConfig.pitch.messagesSpintax.forEach((downMsg, dIdx) => {
+                const downContent = resolveSpintax(downMsg, downsellVars);
+                this.repos.messageQueue.enqueue({
+                  customer_id: customer.id,
+                  phone: customer.phone,
+                  jid: customer.jid,
+                  message_type: "PITCH_DOWNSELL_1",
+                  content: downContent,
+                  scheduled_at: new Date(scheduledDownsell.getTime() + (dIdx + 1) * 3000),
+                  project_id: targetProjectId,
+                });
+                enqueuedCount++;
+              });
+            }
           }
         }
       }
@@ -805,7 +891,11 @@ export class FunnelStateMachine {
         // 2. Atualiza estado
         this.repos.customers.updateState(customer.id, newState);
 
-        // 3. Entrega imediata de UPSELL_1
+        // 3. Entrega de UPSELL_1 se o gatilho estiver ativo
+        const triggerUp1Deliv = this.repos.funnelTriggers?.findByKey(targetProjectId, "UPSELL_1_DELIVERY");
+        const up1DelivActive = triggerUp1Deliv ? triggerUp1Deliv.is_active === 1 : true;
+        const up1DelivDelay = triggerUp1Deliv?.delay_seconds ?? 0;
+
         const templateVars = this.buildTemplateVariables({
           name: customer.name || event.name,
           firstName,
@@ -814,147 +904,172 @@ export class FunnelStateMachine {
 
         let messageStep = 0;
 
-        const customUpsell1Deliv = this.getTemplate("UPSELL_1_DELIVERY", [
-          "DELIVERY_UPSELL_1",
-          "tpl_upsell_1_delivery",
-          "Entrega Upsell 1",
-        ]);
+        if (up1DelivActive) {
+          const deliveryBaseTime = new Date(now.getTime() + up1DelivDelay * 1000);
+          const customUpsell1Deliv =
+            (triggerUp1Deliv?.template_id ? this.repos.templates?.findById(triggerUp1Deliv.template_id) : null) ??
+            this.getTemplate("UPSELL_1_DELIVERY", [
+              "DELIVERY_UPSELL_1",
+              "tpl_upsell_1_delivery",
+              "Entrega Upsell 1",
+            ], targetProjectId);
 
-        if (customUpsell1Deliv && this.repos.templates) {
-          const content = this.repos.templates.interpolate(customUpsell1Deliv.content, templateVars);
-          const mediaFullPath = customUpsell1Deliv.media_path
-            ? resolveMediaFullPath(customUpsell1Deliv.media_path)
-            : (catalogItem.delivery.mediaFiles[0] ? resolveMediaFullPath(catalogItem.delivery.mediaFiles[0].fileName) : null);
+          if (customUpsell1Deliv && this.repos.templates) {
+            const content = this.repos.templates.interpolate(customUpsell1Deliv.content, templateVars);
+            const mediaFullPath = triggerUp1Deliv?.media_path
+              ? resolveMediaFullPath(triggerUp1Deliv.media_path)
+              : (customUpsell1Deliv.media_path
+                ? resolveMediaFullPath(customUpsell1Deliv.media_path)
+                : (catalogItem.delivery.mediaFiles[0] ? resolveMediaFullPath(catalogItem.delivery.mediaFiles[0].fileName) : null));
 
-          this.repos.messageQueue.enqueue({
-            customer_id: customer.id,
-            phone: customer.phone,
-            jid: customer.jid,
-            message_type: "DELIVERY_UPSELL_1",
-            content,
-            media_path: mediaFullPath,
-            scheduled_at: new Date(now.getTime() + messageStep * 3000),
-          });
-          enqueuedCount++;
-          messageStep++;
-        } else {
-          for (const msgTemplate of catalogItem.delivery.messagesSpintax) {
-            const content = resolveSpintax(msgTemplate, templateVars);
             this.repos.messageQueue.enqueue({
               customer_id: customer.id,
               phone: customer.phone,
               jid: customer.jid,
               message_type: "DELIVERY_UPSELL_1",
               content,
-              scheduled_at: new Date(now.getTime() + messageStep * 3000),
+              media_path: mediaFullPath,
+              scheduled_at: new Date(deliveryBaseTime.getTime() + messageStep * 3000),
+              project_id: targetProjectId,
             });
             enqueuedCount++;
             messageStep++;
-          }
+          } else {
+            for (const msgTemplate of catalogItem.delivery.messagesSpintax) {
+              const content = resolveSpintax(msgTemplate, templateVars);
+              this.repos.messageQueue.enqueue({
+                customer_id: customer.id,
+                phone: customer.phone,
+                jid: customer.jid,
+                message_type: "DELIVERY_UPSELL_1",
+                content,
+                scheduled_at: new Date(deliveryBaseTime.getTime() + messageStep * 3000),
+                project_id: targetProjectId,
+              });
+              enqueuedCount++;
+              messageStep++;
+            }
 
-          for (const media of catalogItem.delivery.mediaFiles) {
-            this.repos.messageQueue.enqueue({
-              customer_id: customer.id,
-              phone: customer.phone,
-              jid: customer.jid,
-              message_type: "DELIVERY_UPSELL_1",
-              content: media.caption ?? media.fileName,
-              media_path: resolveMediaFullPath(media.fileName),
-              scheduled_at: new Date(now.getTime() + messageStep * 3000),
-            });
-            enqueuedCount++;
-            messageStep++;
+            for (const media of catalogItem.delivery.mediaFiles) {
+              this.repos.messageQueue.enqueue({
+                customer_id: customer.id,
+                phone: customer.phone,
+                jid: customer.jid,
+                message_type: "DELIVERY_UPSELL_1",
+                content: media.caption ?? media.fileName,
+                media_path: resolveMediaFullPath(media.fileName),
+                scheduled_at: new Date(deliveryBaseTime.getTime() + messageStep * 3000),
+                project_id: targetProjectId,
+              });
+              enqueuedCount++;
+              messageStep++;
+            }
           }
         }
 
-        // 4. Agenda UPSELL_2 para now + 15min
+        // 4. Agenda UPSELL_2 se o gatilho estiver ativo
+        const triggerUp2Offer = this.repos.funnelTriggers?.findByKey(targetProjectId, "UPSELL_2_OFFER");
+        const up2OfferActive = triggerUp2Offer ? triggerUp2Offer.is_active === 1 : true;
         const upsell2Config = CATALOG.UPSELL_2;
-        const nextStepDelay = catalogItem.nextSteps[0]?.delaySeconds ?? 900;
-        const scheduledUpsell2 = new Date(now.getTime() + nextStepDelay * 1000);
+        const nextStepDelay = triggerUp2Offer?.delay_seconds !== undefined
+          ? triggerUp2Offer.delay_seconds
+          : (catalogItem.nextSteps[0]?.delaySeconds ?? 900);
 
-        const upsell2Offer =
-          upsell2Config.offers[upsell2Config.defaultOfferId] ??
-          Object.values(upsell2Config.offers)[0];
+        if (up2OfferActive) {
+          const scheduledUpsell2 = new Date(now.getTime() + nextStepDelay * 1000);
 
-        const upsell2Vars = this.buildTemplateVariables({
-          name: customer.name || event.name,
-          firstName,
-          productName: catalogItem.name,
-          checkoutUrl: upsell2Config.pitch?.checkoutUrl ?? upsell2Offer.checkoutUrl,
-          extra: {
-            nome_upsell_1: CATALOG.UPSELL_1.name,
-            upsell_1_name: CATALOG.UPSELL_1.name,
-            nome_upsell_2: upsell2Config.name,
-            upsell_2_name: upsell2Config.name,
-            link_upsell_2: upsell2Config.pitch?.checkoutUrl ?? upsell2Offer.checkoutUrl,
-            upsell_2_link: upsell2Config.pitch?.checkoutUrl ?? upsell2Offer.checkoutUrl,
-            link_checkout: upsell2Config.pitch?.checkoutUrl ?? upsell2Offer.checkoutUrl,
-          },
-        });
+          const upsell2Offer =
+            upsell2Config.offers[upsell2Config.defaultOfferId] ??
+            Object.values(upsell2Config.offers)[0];
 
-        const customUpsell2 = this.getTemplate("UPSELL_2_OFFER", [
-          "PITCH_UPSELL_2",
-          "tpl_upsell_2_pitch",
-          "tpl_upsell_2_vip",
-          "Script de UPSELL 2",
-        ]);
-
-        if (customUpsell2 && this.repos.templates) {
-          const mediaFullPath = customUpsell2.media_path
-            ? resolveMediaFullPath(customUpsell2.media_path)
-            : (upsell2Config.pitch?.audioFileName ? resolveMediaFullPath(upsell2Config.pitch.audioFileName) : null);
-
-          // 1. Audio PTT se configurado
-          if (mediaFullPath) {
-            this.repos.messageQueue.enqueue({
-              customer_id: customer.id,
-              phone: customer.phone,
-              jid: customer.jid,
-              message_type: "PITCH_UPSELL_2",
-              content: `Audio PTT: ${upsell2Config.name}`,
-              media_path: mediaFullPath,
-              scheduled_at: scheduledUpsell2,
-            });
-            enqueuedCount++;
-          }
-
-          // 2. Balao textual com link de checkout VIP interpolado
-          const pitchContent = this.repos.templates.interpolate(customUpsell2.content, upsell2Vars);
-          this.repos.messageQueue.enqueue({
-            customer_id: customer.id,
-            phone: customer.phone,
-            jid: customer.jid,
-            message_type: "PITCH_UPSELL_2",
-            content: pitchContent,
-            scheduled_at: new Date(scheduledUpsell2.getTime() + (mediaFullPath ? 3000 : 0)),
+          const upsell2Vars = this.buildTemplateVariables({
+            name: customer.name || event.name,
+            firstName,
+            productName: catalogItem.name,
+            checkoutUrl: upsell2Config.pitch?.checkoutUrl ?? upsell2Offer.checkoutUrl,
+            extra: {
+              nome_upsell_1: CATALOG.UPSELL_1.name,
+              upsell_1_name: CATALOG.UPSELL_1.name,
+              nome_upsell_2: upsell2Config.name,
+              upsell_2_name: upsell2Config.name,
+              link_upsell_2: upsell2Config.pitch?.checkoutUrl ?? upsell2Offer.checkoutUrl,
+              upsell_2_link: upsell2Config.pitch?.checkoutUrl ?? upsell2Offer.checkoutUrl,
+              link_checkout: upsell2Config.pitch?.checkoutUrl ?? upsell2Offer.checkoutUrl,
+            },
           });
-          enqueuedCount++;
-        } else {
-          if (upsell2Config.pitch?.audioFileName) {
-            this.repos.messageQueue.enqueue({
-              customer_id: customer.id,
-              phone: customer.phone,
-              jid: customer.jid,
-              message_type: "PITCH_UPSELL_2",
-              content: `Audio PTT: ${upsell2Config.name}`,
-              media_path: resolveMediaFullPath(upsell2Config.pitch.audioFileName),
-              scheduled_at: scheduledUpsell2,
-            });
-            enqueuedCount++;
-          }
 
-          if (upsell2Config.pitch?.messagesSpintax) {
-            upsell2Config.pitch.messagesSpintax.forEach((msg, idx) => {
+          const customUpsell2 =
+            (triggerUp2Offer?.template_id ? this.repos.templates?.findById(triggerUp2Offer.template_id) : null) ??
+            this.getTemplate("UPSELL_2_OFFER", [
+              "PITCH_UPSELL_2",
+              "tpl_upsell_2_pitch",
+              "tpl_upsell_2_vip",
+              "Script de UPSELL 2",
+            ], targetProjectId);
+
+          if (customUpsell2 && this.repos.templates) {
+            const mediaFullPath = triggerUp2Offer?.media_path
+              ? resolveMediaFullPath(triggerUp2Offer.media_path)
+              : (customUpsell2.media_path
+                ? resolveMediaFullPath(customUpsell2.media_path)
+                : (upsell2Config.pitch?.audioFileName ? resolveMediaFullPath(upsell2Config.pitch.audioFileName) : null));
+
+            // 1. Audio PTT se configurado
+            if (mediaFullPath) {
               this.repos.messageQueue.enqueue({
                 customer_id: customer.id,
                 phone: customer.phone,
                 jid: customer.jid,
                 message_type: "PITCH_UPSELL_2",
-                content: resolveSpintax(msg, upsell2Vars),
-                scheduled_at: new Date(scheduledUpsell2.getTime() + (idx + 1) * 3000),
+                content: `Audio PTT: ${upsell2Config.name}`,
+                media_path: mediaFullPath,
+                scheduled_at: scheduledUpsell2,
+                project_id: targetProjectId,
               });
               enqueuedCount++;
+            }
+
+            // 2. Balao textual com link de checkout VIP interpolado
+            const pitchContent = this.repos.templates.interpolate(customUpsell2.content, upsell2Vars);
+            this.repos.messageQueue.enqueue({
+              customer_id: customer.id,
+              phone: customer.phone,
+              jid: customer.jid,
+              message_type: "PITCH_UPSELL_2",
+              content: pitchContent,
+              scheduled_at: new Date(scheduledUpsell2.getTime() + (mediaFullPath ? 3000 : 0)),
+              project_id: targetProjectId,
             });
+            enqueuedCount++;
+          } else {
+            if (upsell2Config.pitch?.audioFileName) {
+              this.repos.messageQueue.enqueue({
+                customer_id: customer.id,
+                phone: customer.phone,
+                jid: customer.jid,
+                message_type: "PITCH_UPSELL_2",
+                content: `Audio PTT: ${upsell2Config.name}`,
+                media_path: resolveMediaFullPath(upsell2Config.pitch.audioFileName),
+                scheduled_at: scheduledUpsell2,
+                project_id: targetProjectId,
+              });
+              enqueuedCount++;
+            }
+
+            if (upsell2Config.pitch?.messagesSpintax) {
+              upsell2Config.pitch.messagesSpintax.forEach((msg, idx) => {
+                this.repos.messageQueue.enqueue({
+                  customer_id: customer.id,
+                  phone: customer.phone,
+                  jid: customer.jid,
+                  message_type: "PITCH_UPSELL_2",
+                  content: resolveSpintax(msg, upsell2Vars),
+                  scheduled_at: new Date(scheduledUpsell2.getTime() + (idx + 1) * 3000),
+                  project_id: targetProjectId,
+                });
+                enqueuedCount++;
+              });
+            }
           }
         }
       }
@@ -974,7 +1089,11 @@ export class FunnelStateMachine {
         // 2. Atualiza estado
         this.repos.customers.updateState(customer.id, newState);
 
-        // 3. Entrega imediata de UPSELL_2
+        // 3. Entrega de UPSELL_2 se o gatilho estiver ativo
+        const triggerUp2Deliv = this.repos.funnelTriggers?.findByKey(targetProjectId, "UPSELL_2_DELIVERY");
+        const up2DelivActive = triggerUp2Deliv ? triggerUp2Deliv.is_active === 1 : true;
+        const up2DelivDelay = triggerUp2Deliv?.delay_seconds ?? 0;
+
         const templateVars = this.buildTemplateVariables({
           name: customer.name || event.name,
           firstName,
@@ -983,55 +1102,65 @@ export class FunnelStateMachine {
 
         let messageStep = 0;
 
-        const customUpsell2Deliv = this.getTemplate("UPSELL_2_DELIVERY", [
-          "DELIVERY_UPSELL_2",
-          "tpl_upsell_2_delivery",
-          "Entrega Upsell 2",
-        ]);
+        if (up2DelivActive) {
+          const deliveryBaseTime = new Date(now.getTime() + up2DelivDelay * 1000);
+          const customUpsell2Deliv =
+            (triggerUp2Deliv?.template_id ? this.repos.templates?.findById(triggerUp2Deliv.template_id) : null) ??
+            this.getTemplate("UPSELL_2_DELIVERY", [
+              "DELIVERY_UPSELL_2",
+              "tpl_upsell_2_delivery",
+              "Entrega Upsell 2",
+            ], targetProjectId);
 
-        if (customUpsell2Deliv && this.repos.templates) {
-          const content = this.repos.templates.interpolate(customUpsell2Deliv.content, templateVars);
-          const mediaFullPath = customUpsell2Deliv.media_path
-            ? resolveMediaFullPath(customUpsell2Deliv.media_path)
-            : (catalogItem.delivery.mediaFiles[0] ? resolveMediaFullPath(catalogItem.delivery.mediaFiles[0].fileName) : null);
+          if (customUpsell2Deliv && this.repos.templates) {
+            const content = this.repos.templates.interpolate(customUpsell2Deliv.content, templateVars);
+            const mediaFullPath = triggerUp2Deliv?.media_path
+              ? resolveMediaFullPath(triggerUp2Deliv.media_path)
+              : (customUpsell2Deliv.media_path
+                ? resolveMediaFullPath(customUpsell2Deliv.media_path)
+                : (catalogItem.delivery.mediaFiles[0] ? resolveMediaFullPath(catalogItem.delivery.mediaFiles[0].fileName) : null));
 
-          this.repos.messageQueue.enqueue({
-            customer_id: customer.id,
-            phone: customer.phone,
-            jid: customer.jid,
-            message_type: "DELIVERY_UPSELL_2",
-            content,
-            media_path: mediaFullPath,
-            scheduled_at: new Date(now.getTime() + messageStep * 3000),
-          });
-          enqueuedCount++;
-          messageStep++;
-        } else {
-          for (const msgTemplate of catalogItem.delivery.messagesSpintax) {
             this.repos.messageQueue.enqueue({
               customer_id: customer.id,
               phone: customer.phone,
               jid: customer.jid,
               message_type: "DELIVERY_UPSELL_2",
-              content: resolveSpintax(msgTemplate, templateVars),
-              scheduled_at: new Date(now.getTime() + messageStep * 3000),
+              content,
+              media_path: mediaFullPath,
+              scheduled_at: new Date(deliveryBaseTime.getTime() + messageStep * 3000),
+              project_id: targetProjectId,
             });
             enqueuedCount++;
             messageStep++;
-          }
+          } else {
+            for (const msgTemplate of catalogItem.delivery.messagesSpintax) {
+              this.repos.messageQueue.enqueue({
+                customer_id: customer.id,
+                phone: customer.phone,
+                jid: customer.jid,
+                message_type: "DELIVERY_UPSELL_2",
+                content: resolveSpintax(msgTemplate, templateVars),
+                scheduled_at: new Date(deliveryBaseTime.getTime() + messageStep * 3000),
+                project_id: targetProjectId,
+              });
+              enqueuedCount++;
+              messageStep++;
+            }
 
-          for (const media of catalogItem.delivery.mediaFiles) {
-            this.repos.messageQueue.enqueue({
-              customer_id: customer.id,
-              phone: customer.phone,
-              jid: customer.jid,
-              message_type: "DELIVERY_UPSELL_2",
-              content: media.caption ?? media.fileName,
-              media_path: resolveMediaFullPath(media.fileName),
-              scheduled_at: new Date(now.getTime() + messageStep * 3000),
-            });
-            enqueuedCount++;
-            messageStep++;
+            for (const media of catalogItem.delivery.mediaFiles) {
+              this.repos.messageQueue.enqueue({
+                customer_id: customer.id,
+                phone: customer.phone,
+                jid: customer.jid,
+                message_type: "DELIVERY_UPSELL_2",
+                content: media.caption ?? media.fileName,
+                media_path: resolveMediaFullPath(media.fileName),
+                scheduled_at: new Date(deliveryBaseTime.getTime() + messageStep * 3000),
+                project_id: targetProjectId,
+              });
+              enqueuedCount++;
+              messageStep++;
+            }
           }
         }
       }
@@ -1051,7 +1180,11 @@ export class FunnelStateMachine {
         // 2. Atualiza estado
         this.repos.customers.updateState(customer.id, newState);
 
-        // 3. Entrega imediata de DOWNSELL
+        // 3. Entrega de DOWNSELL se o gatilho estiver ativo
+        const triggerDownDeliv = this.repos.funnelTriggers?.findByKey(targetProjectId, "DOWNSELL_DELIVERY");
+        const downDelivActive = triggerDownDeliv ? triggerDownDeliv.is_active === 1 : true;
+        const downDelivDelay = triggerDownDeliv?.delay_seconds ?? 0;
+
         const templateVars = this.buildTemplateVariables({
           name: customer.name || event.name,
           firstName,
@@ -1060,55 +1193,65 @@ export class FunnelStateMachine {
 
         let messageStep = 0;
 
-        const customDownsellDeliv = this.getTemplate("DOWNSELL_DELIVERY", [
-          "DELIVERY_DOWNSELL",
-          "tpl_downsell_delivery",
-          "Entrega Downsell",
-        ]);
+        if (downDelivActive) {
+          const deliveryBaseTime = new Date(now.getTime() + downDelivDelay * 1000);
+          const customDownsellDeliv =
+            (triggerDownDeliv?.template_id ? this.repos.templates?.findById(triggerDownDeliv.template_id) : null) ??
+            this.getTemplate("DOWNSELL_DELIVERY", [
+              "DELIVERY_DOWNSELL",
+              "tpl_downsell_delivery",
+              "Entrega Downsell",
+            ], targetProjectId);
 
-        if (customDownsellDeliv && this.repos.templates) {
-          const content = this.repos.templates.interpolate(customDownsellDeliv.content, templateVars);
-          const mediaFullPath = customDownsellDeliv.media_path
-            ? resolveMediaFullPath(customDownsellDeliv.media_path)
-            : (catalogItem.delivery.mediaFiles[0] ? resolveMediaFullPath(catalogItem.delivery.mediaFiles[0].fileName) : null);
+          if (customDownsellDeliv && this.repos.templates) {
+            const content = this.repos.templates.interpolate(customDownsellDeliv.content, templateVars);
+            const mediaFullPath = triggerDownDeliv?.media_path
+              ? resolveMediaFullPath(triggerDownDeliv.media_path)
+              : (customDownsellDeliv.media_path
+                ? resolveMediaFullPath(customDownsellDeliv.media_path)
+                : (catalogItem.delivery.mediaFiles[0] ? resolveMediaFullPath(catalogItem.delivery.mediaFiles[0].fileName) : null));
 
-          this.repos.messageQueue.enqueue({
-            customer_id: customer.id,
-            phone: customer.phone,
-            jid: customer.jid,
-            message_type: "DELIVERY_DOWNSELL",
-            content,
-            media_path: mediaFullPath,
-            scheduled_at: new Date(now.getTime() + messageStep * 3000),
-          });
-          enqueuedCount++;
-          messageStep++;
-        } else {
-          for (const msgTemplate of catalogItem.delivery.messagesSpintax) {
             this.repos.messageQueue.enqueue({
               customer_id: customer.id,
               phone: customer.phone,
               jid: customer.jid,
               message_type: "DELIVERY_DOWNSELL",
-              content: resolveSpintax(msgTemplate, templateVars),
-              scheduled_at: new Date(now.getTime() + messageStep * 3000),
+              content,
+              media_path: mediaFullPath,
+              scheduled_at: new Date(deliveryBaseTime.getTime() + messageStep * 3000),
+              project_id: targetProjectId,
             });
             enqueuedCount++;
             messageStep++;
-          }
+          } else {
+            for (const msgTemplate of catalogItem.delivery.messagesSpintax) {
+              this.repos.messageQueue.enqueue({
+                customer_id: customer.id,
+                phone: customer.phone,
+                jid: customer.jid,
+                message_type: "DELIVERY_DOWNSELL",
+                content: resolveSpintax(msgTemplate, templateVars),
+                scheduled_at: new Date(deliveryBaseTime.getTime() + messageStep * 3000),
+                project_id: targetProjectId,
+              });
+              enqueuedCount++;
+              messageStep++;
+            }
 
-          for (const media of catalogItem.delivery.mediaFiles) {
-            this.repos.messageQueue.enqueue({
-              customer_id: customer.id,
-              phone: customer.phone,
-              jid: customer.jid,
-              message_type: "DELIVERY_DOWNSELL",
-              content: media.caption ?? media.fileName,
-              media_path: resolveMediaFullPath(media.fileName),
-              scheduled_at: new Date(now.getTime() + messageStep * 3000),
-            });
-            enqueuedCount++;
-            messageStep++;
+            for (const media of catalogItem.delivery.mediaFiles) {
+              this.repos.messageQueue.enqueue({
+                customer_id: customer.id,
+                phone: customer.phone,
+                jid: customer.jid,
+                message_type: "DELIVERY_DOWNSELL",
+                content: media.caption ?? media.fileName,
+                media_path: resolveMediaFullPath(media.fileName),
+                scheduled_at: new Date(deliveryBaseTime.getTime() + messageStep * 3000),
+                project_id: targetProjectId,
+              });
+              enqueuedCount++;
+              messageStep++;
+            }
           }
         }
       }

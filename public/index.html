@@ -422,6 +422,88 @@
       background: var(--accent-subtle);
       border-color: var(--accent-primary);
     }
+
+    /* Toggle Switch Component */
+    .toggle-switch {
+      position: relative;
+      display: inline-block;
+      width: 42px;
+      height: 22px;
+      vertical-align: middle;
+    }
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: var(--border-strong);
+      transition: all 0.2s ease;
+      border-radius: 22px;
+    }
+    .toggle-slider:before {
+      position: absolute;
+      content: "";
+      height: 16px;
+      width: 16px;
+      left: 3px;
+      bottom: 3px;
+      background-color: #ffffff;
+      transition: all 0.2s ease;
+      border-radius: 50%;
+    }
+    .toggle-switch input:checked + .toggle-slider {
+      background-color: var(--status-success);
+    }
+    .toggle-switch input:checked + .toggle-slider:before {
+      transform: translateX(20px);
+    }
+
+    /* Trigger Card Styling */
+    .trigger-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    .trigger-card:hover {
+      border-color: var(--border-strong);
+    }
+    .trigger-card.is-disabled {
+      opacity: 0.65;
+      background: rgba(15, 23, 42, 0.4);
+    }
+    .trigger-card-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .trigger-title-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .trigger-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    .trigger-key-badge {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
   </style>
 </head>
 <body>
@@ -525,6 +607,12 @@
         <polyline points="10 9 9 9 8 9"></polyline>
       </svg>
       Templates
+    </button>
+    <button class="tab-btn" role="tab" data-tab="gatilhos" aria-selected="false">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+      </svg>
+      Gatilhos & Automação
     </button>
     <button class="tab-btn" role="tab" data-tab="configuracoes" aria-selected="false">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1381,6 +1469,42 @@
         </div>
       </div>
     </section>
+
+    <!-- Tab: Gatilhos & Automacao -->
+    <section id="tab-gatilhos" class="tab-panel" role="tabpanel">
+      <div class="card" style="margin-bottom: 20px;">
+        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+          <div>
+            <div class="card-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+              </svg>
+              Gatilhos & Regras de Automacao do Funil
+            </div>
+            <div style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">
+              Controle individual de cada etapa: ative/desative disparos, defina o tempo de espera (delay) e escolha o template exato por projeto.
+            </div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <select id="triggers-filter-project" class="form-control" style="width: auto; padding: 4px 10px; font-size: 12px; height: 32px; background: var(--bg-elevated); border: 1px solid var(--border-strong); color: var(--text-primary); border-radius: var(--radius-md);">
+              <option value="default">Projeto Padrao</option>
+            </select>
+            <button type="button" id="btn-reset-default-triggers" class="btn" style="border: 1px solid var(--border-subtle); padding: 5px 12px; font-size: 12px; background: transparent; color: var(--text-secondary);">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+              </svg>
+              Restaurar Padroes
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div id="triggers-alert-box" class="alert-box" style="display: none; margin-bottom: 16px;"></div>
+
+      <div id="triggers-cards-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px;">
+        <div style="color: var(--text-muted); font-size: 13px; padding: 24px;">Carregando gatilhos do projeto...</div>
+      </div>
+    </section>
     <section id="tab-configuracoes" class="tab-panel" role="tabpanel">
       <div class="content-grid">
         <div class="card">
@@ -1478,6 +1602,7 @@
       queue: [],
       orders: [],
       templates: [],
+      triggers: [],
       activeTab: "dashboard",
     };
 
@@ -1508,6 +1633,7 @@
       if (tabName === "fila") loadQueue();
       if (tabName === "pedidos") loadOrders();
       if (tabName === "templates") loadTemplates();
+      if (tabName === "gatilhos") loadTriggers();
     }
 
     function formatPairingCode(code) {
@@ -2658,6 +2784,7 @@
           state.selectedProject = globalProjectSelect.value;
           loadQueue();
           loadOrders();
+          loadTriggers();
         });
       }
 
@@ -2673,6 +2800,243 @@
       if (btnClearQueueTab) {
         btnClearQueueTab.addEventListener("click", () => {
           clearQueue(state.selectedProject);
+        });
+      }
+
+      // =========================================================================
+      // Modulo de Gatilhos & Regras de Automacao (Funnel Triggers)
+      // =========================================================================
+      function showTriggerAlert(msg, type = "success") {
+        const el = document.getElementById("triggers-alert-box");
+        if (!el) return;
+        el.className = `alert-box ${type === "error" ? "error" : "success"}`;
+        el.textContent = msg;
+        el.style.display = "block";
+        setTimeout(() => { el.style.display = "none"; }, 4000);
+      }
+
+      async function loadTriggers() {
+        const grid = document.getElementById("triggers-cards-grid");
+        if (!grid) return;
+
+        const projId = state.selectedProject && state.selectedProject !== "all" ? state.selectedProject : "default";
+
+        // Sincroniza select de filtro na aba
+        const filterSelect = document.getElementById("triggers-filter-project");
+        if (filterSelect) {
+          if (state.projects && state.projects.length > 0) {
+            filterSelect.innerHTML = state.projects.map(p =>
+              `<option value="${escapeHtml(p.id)}"${p.id === projId ? " selected" : ""}>${escapeHtml(p.name)}</option>`
+            ).join("");
+          }
+          filterSelect.value = projId;
+        }
+
+        try {
+          const res = await fetch(`/api/triggers?project_id=${encodeURIComponent(projId)}`);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+          state.triggers = data.triggers || [];
+          renderTriggers();
+        } catch (err) {
+          grid.innerHTML = `<div style="color: var(--status-danger); padding: 24px;">Falha ao carregar gatilhos: ${escapeHtml(err.message)}</div>`;
+        }
+      }
+
+      function renderTriggers() {
+        const grid = document.getElementById("triggers-cards-grid");
+        if (!grid) return;
+
+        if (state.triggers.length === 0) {
+          grid.innerHTML = `<div style="color: var(--text-muted); padding: 24px;">Nenhum gatilho configurado para este projeto.</div>`;
+          return;
+        }
+
+        const availableTemplates = state.templates || [];
+
+        grid.innerHTML = state.triggers.map((t) => {
+          const isActive = t.is_active === 1;
+          const delayMin = Math.round((t.delay_seconds || 0) / 60);
+
+          const tplOptions = [
+            `<option value="">-- Padrao (${escapeHtml(t.trigger_key)}) --</option>`,
+            ...availableTemplates.map(tpl =>
+              `<option value="${escapeHtml(tpl.id)}"${tpl.id === t.template_id ? " selected" : ""}>${escapeHtml(tpl.name)}</option>`
+            )
+          ].join("");
+
+          return `
+            <div class="trigger-card ${isActive ? '' : 'is-disabled'}" id="card-trg-${escapeHtml(t.id)}">
+              <div class="trigger-card-header">
+                <div class="trigger-title-wrap">
+                  <div class="trigger-name">${escapeHtml(t.name)}</div>
+                  <div class="trigger-key-badge">${escapeHtml(t.trigger_key)}</div>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span id="badge-status-${escapeHtml(t.id)}" class="badge ${isActive ? 'badge-success' : 'badge-warning'}">
+                    ${isActive ? 'Ativo' : 'Pausado'}
+                  </span>
+                  <label class="toggle-switch" title="${isActive ? 'Clique para desativar' : 'Clique para ativar'}">
+                    <input type="checkbox" class="trg-toggle-cb" data-id="${escapeHtml(t.id)}" ${isActive ? 'checked' : ''}>
+                    <span class="toggle-slider"></span>
+                  </label>
+                </div>
+              </div>
+
+              <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 6px;">
+                <div>
+                  <label class="form-label" style="font-size: 11px;">Evento Disparador</label>
+                  <div style="font-family: var(--font-mono); font-size: 12px; color: var(--accent-primary); background: var(--bg-elevated); padding: 6px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+                    ${escapeHtml(t.event_type)}
+                  </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                  <div>
+                    <label class="form-label" style="font-size: 11px;" for="delay-${escapeHtml(t.id)}">Espera (Minutos)</label>
+                    <input type="number" min="0" max="10080" id="delay-${escapeHtml(t.id)}" class="form-control" value="${delayMin}" style="height: 32px; font-size: 13px;">
+                  </div>
+                  <div>
+                    <label class="form-label" style="font-size: 11px;" for="delay-sec-${escapeHtml(t.id)}">Total (Segundos)</label>
+                    <input type="number" min="0" id="delay-sec-${escapeHtml(t.id)}" class="form-control" value="${t.delay_seconds || 0}" style="height: 32px; font-size: 13px;">
+                  </div>
+                </div>
+
+                <div>
+                  <label class="form-label" style="font-size: 11px;" for="tpl-${escapeHtml(t.id)}">Template da Mensagem</label>
+                  <select id="tpl-${escapeHtml(t.id)}" class="form-control" style="height: 32px; font-size: 13px;">
+                    ${tplOptions}
+                  </select>
+                </div>
+
+                <div style="display: flex; justify-content: flex-end; margin-top: 4px;">
+                  <button type="button" class="btn btn-save-trigger" data-id="${escapeHtml(t.id)}" style="background: var(--bg-elevated); border: 1px solid var(--border-strong); padding: 5px 12px; font-size: 12px;">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                    </svg>
+                    <span>Salvar Configuracao</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          `;
+        }).join("");
+
+        // Event listeners para os toggles (Optimistic UI imediato)
+        grid.querySelectorAll(".trg-toggle-cb").forEach((cb) => {
+          cb.addEventListener("change", async () => {
+            const id = cb.getAttribute("data-id");
+            const isChecked = cb.checked;
+            const card = document.getElementById(`card-trg-${id}`);
+            const badge = document.getElementById(`badge-status-${id}`);
+
+            if (card) {
+              if (isChecked) card.classList.remove("is-disabled");
+              else card.classList.add("is-disabled");
+            }
+            if (badge) {
+              badge.className = `badge ${isChecked ? "badge-success" : "badge-warning"}`;
+              badge.textContent = isChecked ? "Ativo" : "Pausado";
+            }
+
+            try {
+              const res = await fetch(`/api/triggers/${id}/toggle`, { method: "PATCH" });
+              const data = await res.json();
+              if (!res.ok || !data.success) throw new Error(data.error || "Falha ao alternar");
+              showTriggerAlert(`Gatilho ${isChecked ? "ativado" : "desativado"} com sucesso!`);
+            } catch (err) {
+              cb.checked = !isChecked;
+              if (card) {
+                if (!isChecked) card.classList.remove("is-disabled");
+                else card.classList.add("is-disabled");
+              }
+              showTriggerAlert(`Erro: ${err.message}`, "error");
+            }
+          });
+        });
+
+        // Sincroniza minutos <-> segundos nos inputs
+        grid.querySelectorAll(".trigger-card").forEach((card) => {
+          const id = card.id.replace("card-trg-", "");
+          const minInput = document.getElementById(`delay-${id}`);
+          const secInput = document.getElementById(`delay-sec-${id}`);
+          if (minInput && secInput) {
+            minInput.addEventListener("input", () => {
+              secInput.value = Math.max(0, Number(minInput.value) || 0) * 60;
+            });
+            secInput.addEventListener("input", () => {
+              minInput.value = Math.round((Math.max(0, Number(secInput.value) || 0)) / 60);
+            });
+          }
+        });
+
+        // Event listeners para salvar alteracoes de delay e template
+        grid.querySelectorAll(".btn-save-trigger").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const id = btn.getAttribute("data-id");
+            const secInput = document.getElementById(`delay-sec-${id}`);
+            const tplSelect = document.getElementById(`tpl-${id}`);
+            const delay_seconds = secInput ? Math.max(0, Number(secInput.value) || 0) : 0;
+            const template_id = tplSelect && tplSelect.value ? tplSelect.value : null;
+
+            btn.disabled = true;
+            const prevHtml = btn.innerHTML;
+            btn.innerHTML = '<span>Salvando...</span>';
+
+            try {
+              const res = await fetch(`/api/triggers/${id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ delay_seconds, template_id }),
+              });
+              const data = await res.json();
+              if (!res.ok || !data.success) throw new Error(data.error || "Falha ao salvar");
+              showTriggerAlert("Configuracoes do gatilho salvas com sucesso!");
+            } catch (err) {
+              showTriggerAlert(`Erro ao salvar: ${err.message}`, "error");
+            } finally {
+              btn.disabled = false;
+              btn.innerHTML = prevHtml;
+            }
+          });
+        });
+      }
+
+      // Filtro de projeto e reset de defaults na aba de gatilhos
+      const triggersFilterProj = document.getElementById("triggers-filter-project");
+      if (triggersFilterProj) {
+        triggersFilterProj.addEventListener("change", () => {
+          state.selectedProject = triggersFilterProj.value;
+          const globalSelect = document.getElementById("global-project-select");
+          if (globalSelect) globalSelect.value = state.selectedProject;
+          loadTriggers();
+          loadQueue();
+        });
+      }
+
+      const btnResetDefaults = document.getElementById("btn-reset-default-triggers");
+      if (btnResetDefaults) {
+        btnResetDefaults.addEventListener("click", async () => {
+          const projId = state.selectedProject && state.selectedProject !== "all" ? state.selectedProject : "default";
+          btnResetDefaults.disabled = true;
+          try {
+            const res = await fetch("/api/triggers/reset-defaults", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ project_id: projId }),
+            });
+            const data = await res.json();
+            if (res.ok && data.success) {
+              showTriggerAlert("Gatilhos padrao restaurados com sucesso!");
+              await loadTriggers();
+            } else {
+              showTriggerAlert(`Erro: ${data.error || "Falha ao restaurar"}`, "error");
+            }
+          } catch (err) {
+            showTriggerAlert(`Erro de conexao: ${err.message}`, "error");
+          } finally {
+            btnResetDefaults.disabled = false;
+          }
         });
       }
 
@@ -2912,6 +3276,7 @@
       loadProjects();
       loadQueue();
       loadTemplates();
+      loadTriggers();
 
       // Polling a cada 3s em /api/status para atualizacao em tempo real
       setInterval(loadStatus, 3000);
