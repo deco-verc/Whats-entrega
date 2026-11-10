@@ -64,9 +64,10 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
     next();
   });
   const { ADMIN_USERNAME, ADMIN_PASSWORD } = process.env;
+  const shouldProtectAdmin = options.requireAdmin === false ? false : Boolean(options.requireAdmin || env.isProduction || (ADMIN_USERNAME && ADMIN_PASSWORD));
   app.use(protectAdministration(
     options.adminCredentials ?? (ADMIN_USERNAME && ADMIN_PASSWORD ? { username: ADMIN_USERNAME, password: ADMIN_PASSWORD } : undefined),
-    env.isProduction || Boolean(options.requireAdmin || ADMIN_USERNAME || ADMIN_PASSWORD)
+    shouldProtectAdmin
   ));
   app.use(express.json({
     limit: "2mb",
