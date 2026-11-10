@@ -1,7 +1,7 @@
 import { test, describe, beforeEach, afterEach } from "node:test";
 import * as assert from "node:assert/strict";
 import * as http from "node:http";
-import { getDatabase, closeDatabase } from "../src/database/connection.js";
+import { initDatabase, closeDatabase } from "../src/database/connection.js";
 import { createWebhookApp } from "../src/webhooks/server.js";
 import {
   createRepositories,
@@ -18,8 +18,7 @@ describe("Gatilhos do Funil e Regras de Automacao (funnel_triggers)", () => {
 
   beforeEach(async () => {
     closeDatabase();
-    process.env.DB_PATH = ":memory:";
-    const db = getDatabase();
+    const db = initDatabase(":memory:");
     repos = createRepositories(db);
     triggerRepo = repos.funnelTriggers;
     repos.templates.seedDefaultTemplates(true);
@@ -53,7 +52,6 @@ describe("Gatilhos do Funil e Regras de Automacao (funnel_triggers)", () => {
     const res = await fetch(`${baseUrl}/api/triggers?project_id=default`);
     assert.equal(res.status, 200);
     const body = (await res.json()) as any;
-    console.log("DEBUG_TRIGGERS_VPS:", body.triggers.map((t: any) => t.trigger_key));
 
     assert.equal(body.success, true);
     assert.equal(body.total, 8);
