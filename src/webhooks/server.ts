@@ -64,7 +64,7 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
     next();
   });
   const { ADMIN_USERNAME, ADMIN_PASSWORD } = process.env;
-  const shouldProtectAdmin = Boolean(options.requireAdmin);
+  const shouldProtectAdmin = options.requireAdmin ?? Boolean(options.adminCredentials);
   app.use(protectAdministration(
     options.adminCredentials ?? (ADMIN_USERNAME && ADMIN_PASSWORD ? { username: ADMIN_USERNAME, password: ADMIN_PASSWORD } : undefined),
     shouldProtectAdmin

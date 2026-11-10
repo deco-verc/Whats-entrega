@@ -14,17 +14,17 @@ export function protectAdministration(
     if (publicHealth || publicWebhook) return next();
 
     res.set("Cache-Control", "no-store");
-    if (!expected && required) {
+    if (!required) return next();
+
+    if (!expected) {
       res.status(503).json({ error: "Configure as credenciais administrativas do painel." });
       return;
     }
-    if (expected) {
-      const authorization = req.get("Authorization")?.match(/^Basic ([A-Za-z0-9+/]+=*)$/i)?.[1];
-      if (!authorization || !timingSafeEqual(digest(Buffer.from(authorization, "base64").toString()), expected)) {
-        res.set("WWW-Authenticate", 'Basic realm="WhatsAppEntrega", charset="UTF-8"');
-        res.status(401).json({ error: "Autenticação administrativa obrigatória." });
-        return;
-      }
+    const authorization = req.get("Authorization")?.match(/^Basic ([A-Za-z0-9+/]+=*)$/i)?.[1];
+    if (!authorization || !timingSafeEqual(digest(Buffer.from(authorization, "base64").toString()), expected)) {
+      res.set("WWW-Authenticate", 'Basic realm="WhatsAppEntrega", charset="UTF-8"');
+      res.status(401).json({ error: "Autenticação administrativa obrigatória." });
+      return;
     }
 
     if (!["GET", "HEAD", "OPTIONS"].includes(req.method) &&
