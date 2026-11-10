@@ -191,6 +191,10 @@ if (isDirectRun) {
       console.log(`Status WhatsApp: ${getWhatsAppConnectionStatus()}`);
       console.log("==================================================");
 
+      if (typeof process.send === "function") {
+        process.send("ready");
+      }
+
       const handleSignal = async (signal: string) => {
         console.log(`\n[System] Sinal ${signal} recebido.`);
         await instance.stop();

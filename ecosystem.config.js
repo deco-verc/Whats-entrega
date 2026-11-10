@@ -10,9 +10,8 @@ export default {
       exec_mode: "fork",
       autorestart: true,
       watch: false,
-      max_memory_restart: "150M", // Mantem footprint leve dentro da VM e2-micro (1 GB RAM)
+      max_memory_restart: "300M", // Mantem footprint leve dentro da VM com RAM limitada
       kill_timeout: 10000, // Tempo para encerramento gracioso (10 segundos)
-      listen_timeout: 8000,
       restart_delay: 4000, // Pausa de respiro entre reconexoes automaticas
       max_restarts: 10,
       env: {
