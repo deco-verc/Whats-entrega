@@ -1,235 +1,165 @@
-import { Router, Request, Response } from "express";
+import { Router, type Request, type Response } from "express";
+import type Database from "better-sqlite3";
 import { getDatabase } from "../database/connection.js";
-import {
-  ProjectRepository,
-  TemplateRepository,
-  MessageQueueRepository,
-  CustomerRepository,
-  OrderRepository,
-  type Project,
-} from "../database/repositories.js";
+import { createRepositories } from "../database/repositories.js";
+import { parseProjectMetadata, publicProject, saveProjectMetadata, workspaceFor } from "./project-workspace.js";
 
-export interface ProjectsRouterOptions {
-  projectRepo?: ProjectRepository;
-  templateRepo?: TemplateRepository;
-  queueRepo?: MessageQueueRepository;
-  customerRepo?: CustomerRepository;
-  orderRepo?: OrderRepository;
-}
-
-export function createProjectsRouter(options: ProjectsRouterOptions = {}): Router {
+export function createProjectsRouter(database: () => Database.Database = getDatabase): Router {
   const router = Router();
 
-  const getRepos = () => {
-    const db = getDatabase();
-    return {
-      projectRepo: options.projectRepo ?? new ProjectRepository(db),
-      templateRepo: options.templateRepo ?? new TemplateRepository(db),
-      queueRepo: options.queueRepo ?? new MessageQueueRepository(db),
-      customerRepo: options.customerRepo ?? new CustomerRepository(db),
-      orderRepo: options.orderRepo ?? new OrderRepository(db),
-      db,
-    };
+  router.get("/", (_req, res) => {
+    const repos = createRepositories(database());
+    const projects = repos.projects.listAll().filter((project) => !workspaceFor(repos.db, project.id)?.archived_at);
+    res.json({ success: true, projects: projects.map((project) => publicProject(repos.db, project)) });
+  });
+
+  const save = (req: Request, res: Response): void => {
+    const repos = createRepositories(database());
+    const id = typeof req.params.id === "string" ? req.params.id : undefined;
+    const previous = id ? repos.projects.findById(id) : null;
+    if (id && (!previous || workspaceFor(repos.db, id)?.archived_at)) {
+      res.status(404).json({ error: "Projeto não encontrado." });
+      return;
+    }
+    const body = req.body ?? {};
+    const { name, slug, description, cakto_product_id, cakto_webhook_secret, is_active } = body;
+    if ((!previous || name !== undefined) && (typeof name !== "string" || !name.trim() || name.length > 150) ||
+        (!previous || slug !== undefined) && (typeof slug !== "string" || !/^[a-z0-9][a-z0-9_-]{0,79}$/i.test(slug.trim()) || slug.trim().toLowerCase() === "all") ||
+        [description, cakto_product_id, cakto_webhook_secret].some((value) => value != null && (typeof value !== "string" || value.length > 2000)) ||
+        (is_active !== undefined && ![0, 1].includes(is_active))) {
+      res.status(400).json({ error: "Confira o nome, o slug e os dados do projeto." });
+      return;
+    }
+    const cleanSlug = typeof slug === "string" ? slug.trim().toLowerCase() : previous?.slug;
+    const taken = cleanSlug ? repos.projects.findBySlug(cleanSlug) : null;
+    if (taken && taken.id !== id) {
+      res.status(409).json({ error: "Já existe um projeto com este slug." });
+      return;
+    }
+    let metadata: ReturnType<typeof parseProjectMetadata>;
+    try {
+      metadata = parseProjectMetadata(body);
+    } catch {
+      res.status(400).json({ error: "Confira o produto, o fuso horário e os links informados." });
+      return;
+    }
+    if (is_active === 1 && previous && !previous.is_active && previous.id !== "default") {
+      const current = publicProject(repos.db, previous);
+      const validRule = repos.db.prepare(`
+        SELECT 1 FROM funnel_triggers f JOIN message_templates t ON t.id = f.template_id AND t.project_id = f.project_id
+        WHERE f.project_id = ? AND f.is_active = 1
+      `).get(previous.id);
+      if (!current.onboarding_checks.slice(1, 5).every(Boolean) || !validRule ||
+          cakto_product_id !== undefined || cakto_webhook_secret !== undefined ||
+          metadata.links !== null || metadata.additional_products !== null || cleanSlug !== previous.slug) {
+        res.status(422).json({ error: "Conclua a integração e a simulação e habilite pelo menos uma automação antes de ativar." });
+        return;
+      }
+    }
+    const project = repos.transaction(() => {
+      const fields = { name, slug: cleanSlug, description, cakto_product_id, cakto_webhook_secret };
+      const saved = id
+        ? repos.projects.update(id, { ...fields, is_active })!
+        : repos.projects.create({ ...fields, name, slug: cleanSlug!, is_active: 0 });
+      const oldMetadata = workspaceFor(repos.db, saved.id);
+      const integrationChanged = previous && (previous.cakto_product_id !== saved.cakto_product_id ||
+        previous.cakto_webhook_secret !== saved.cakto_webhook_secret || previous.slug !== saved.slug ||
+        (metadata.additional_products !== null && metadata.additional_products !== (oldMetadata?.additional_products_json ?? "[]")));
+      saveProjectMetadata(repos.db, saved.id, metadata);
+      if (integrationChanged) {
+        repos.db.prepare(`
+          UPDATE project_workspace SET integration_after_id = COALESCE((SELECT MAX(id) FROM webhook_events WHERE project_id = ?), 0)
+          WHERE project_id = ?
+        `).run(saved.id, saved.id);
+      }
+      if (integrationChanged || (metadata.links && metadata.links !== oldMetadata?.links_json)) {
+        repos.db.prepare("UPDATE project_workspace SET simulated_at = NULL WHERE project_id = ?").run(saved.id);
+      }
+      return publicProject(repos.db, saved);
+    });
+    res.status(id ? 200 : 201).json({ success: true, project });
   };
+  router.post("/", save);
+  router.put("/:id", save);
 
-  // GET /api/projects - Listar todos os projetos com estatisticas
-  router.get("/", (_req: Request, res: Response): void => {
-    try {
-      const { projectRepo, db } = getRepos();
-      const projects = projectRepo.listAll();
-
-      const projectsWithStats = projects.map((p) => {
-        const tplCount = (
-          db.prepare("SELECT COUNT(*) as count FROM message_templates WHERE project_id = ?").get(p.id) as { count: number }
-        )?.count ?? 0;
-        const pendingQueue = (
-          db.prepare("SELECT COUNT(*) as count FROM message_queue WHERE project_id = ? AND status = 'PENDING'").get(p.id) as { count: number }
-        )?.count ?? 0;
-        const sentQueue = (
-          db.prepare("SELECT COUNT(*) as count FROM message_queue WHERE project_id = ? AND status = 'SENT'").get(p.id) as { count: number }
-        )?.count ?? 0;
-        const ordersCount = (
-          db.prepare("SELECT COUNT(*) as count FROM orders WHERE project_id = ?").get(p.id) as { count: number }
-        )?.count ?? 0;
-        const customersCount = (
-          db.prepare("SELECT COUNT(*) as count FROM customers WHERE project_id = ?").get(p.id) as { count: number }
-        )?.count ?? 0;
-
-        return {
-          ...p,
-          stats: {
-            templates_count: tplCount,
-            pending_queue: pendingQueue,
-            sent_queue: sentQueue,
-            orders_count: ordersCount,
-            customers_count: customersCount,
-          },
-        };
-      });
-
-      res.status(200).json({ success: true, projects: projectsWithStats });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ success: false, error: msg });
+  router.get("/:id", (req, res) => {
+    const repos = createRepositories(database());
+    const project = repos.projects.findById(req.params.id) ?? repos.projects.findBySlug(req.params.id);
+    if (!project || workspaceFor(repos.db, project.id)?.archived_at) {
+      res.status(404).json({ error: "Projeto não encontrado." });
+      return;
     }
+    res.json({ success: true, project: publicProject(repos.db, project) });
   });
 
-  // POST /api/projects - Criar novo projeto
-  router.post("/", (req: Request, res: Response): void => {
-    try {
-      const { projectRepo } = getRepos();
-      const { name, slug, description, cakto_product_id, cakto_webhook_secret } = req.body || {};
-
-      if (!name || typeof name !== "string" || name.trim().length === 0) {
-        res.status(400).json({
-          success: false,
-          error: "ValidationError: campo 'name' e obrigatorio.",
+  router.post("/:id/duplicate", (req, res) => {
+    const repos = createRepositories(database());
+    const source = repos.projects.findById(req.params.id);
+    if (!source || workspaceFor(repos.db, source.id)?.archived_at) {
+      res.status(404).json({ error: "Projeto não encontrado." });
+      return;
+    }
+    const project = repos.transaction(() => {
+      const base = source.slug.slice(0, 67) + "-copia";
+      let slug = base;
+      for (let i = 2; repos.projects.findBySlug(slug); i++) slug = `${base}-${i}`;
+      const copy = repos.projects.create({ name: source.name + " (cópia)", slug, description: source.description, is_active: 0 });
+      const metadata = workspaceFor(repos.db, source.id);
+      saveProjectMetadata(repos.db, copy.id, parseProjectMetadata({
+        product_name: metadata?.product_name ?? source.name, timezone: metadata?.timezone,
+      }));
+      const templates = new Map<string, string>();
+      for (const template of repos.templates.findAll(source.id)) {
+        const clone = repos.templates.create({ ...template, id: undefined, project_id: copy.id });
+        templates.set(template.id, clone.id);
+        repos.db.prepare("INSERT INTO template_options SELECT ?, category, message_type, missing_policy, fallback FROM template_options WHERE template_id = ?")
+          .run(clone.id, template.id);
+      }
+      for (const trigger of repos.funnelTriggers.listByProject(source.id)) {
+        const clone = repos.funnelTriggers.create({
+          ...trigger, id: undefined, project_id: copy.id, is_active: 0, media_path: null,
+          template_id: trigger.template_id ? templates.get(trigger.template_id) ?? null : null,
         });
-        return;
+        repos.db.prepare("INSERT INTO automation_conditions SELECT ?, conditions_json FROM automation_conditions WHERE trigger_id = ?").run(clone.id, trigger.id);
       }
-
-      if (!slug || typeof slug !== "string" || slug.trim().length === 0) {
-        res.status(400).json({
-          success: false,
-          error: "ValidationError: campo 'slug' e obrigatorio.",
-        });
-        return;
-      }
-
-      const cleanSlug = slug.trim().toLowerCase().replace(/[^a-z0-9-_]/g, "-");
-      const existing = projectRepo.findBySlug(cleanSlug);
-      if (existing) {
-        res.status(409).json({
-          success: false,
-          error: `SlugConflict: ja existe um projeto com o slug "${cleanSlug}".`,
-        });
-        return;
-      }
-
-      const created = projectRepo.create({
-        name: name.trim(),
-        slug: cleanSlug,
-        description: description ? String(description).trim() : null,
-        cakto_product_id: cakto_product_id ? String(cakto_product_id).trim() : null,
-        cakto_webhook_secret: cakto_webhook_secret ? String(cakto_webhook_secret).trim() : null,
-      });
-
-      res.status(201).json({ success: true, project: created });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ success: false, error: msg });
-    }
+      return publicProject(repos.db, copy);
+    });
+    res.status(201).json({ success: true, project });
   });
 
-  // GET /api/projects/:id - Obter detalhes de um projeto
-  router.get("/:id", (req: Request, res: Response): void => {
-    try {
-      const { projectRepo } = getRepos();
-      const idOrSlug = String(req.params.id);
-      const project = projectRepo.findById(idOrSlug) ?? projectRepo.findBySlug(idOrSlug);
-
-      if (!project) {
-        res.status(404).json({ success: false, error: "Projeto nao encontrado." });
-        return;
-      }
-
-      res.status(200).json({ success: true, project });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ success: false, error: msg });
+  router.delete("/:id", (req, res) => {
+    const repos = createRepositories(database());
+    const id = req.params.id;
+    if (id === "default") {
+      res.status(400).json({ error: "O projeto padrão não pode ser arquivado." });
+      return;
     }
+    if (!repos.projects.findById(id) || workspaceFor(repos.db, id)?.archived_at) {
+      res.status(404).json({ error: "Projeto não encontrado." });
+      return;
+    }
+    repos.transaction(() => {
+      repos.projects.update(id, { is_active: 0 });
+      repos.db.prepare(`
+        INSERT INTO project_workspace (project_id, archived_at) VALUES (?, datetime('now'))
+        ON CONFLICT(project_id) DO UPDATE SET archived_at = excluded.archived_at
+      `).run(id);
+    });
+    res.json({ success: true, archived: true });
   });
 
-  // PUT /api/projects/:id - Atualizar projeto
-  router.put("/:id", (req: Request, res: Response): void => {
-    try {
-      const { projectRepo } = getRepos();
-      const id = String(req.params.id);
-      const existing = projectRepo.findById(id);
-
-      if (!existing) {
-        res.status(404).json({ success: false, error: "Projeto nao encontrado." });
-        return;
-      }
-
-      const { name, slug, description, cakto_product_id, cakto_webhook_secret, is_active } = req.body || {};
-
-      let cleanSlug = undefined;
-      if (slug !== undefined) {
-        cleanSlug = String(slug).trim().toLowerCase().replace(/[^a-z0-9-_]/g, "-");
-        if (cleanSlug !== existing.slug) {
-          const conflict = projectRepo.findBySlug(cleanSlug);
-          if (conflict && conflict.id !== id) {
-            res.status(409).json({
-              success: false,
-              error: `SlugConflict: ja existe outro projeto com o slug "${cleanSlug}".`,
-            });
-            return;
-          }
-        }
-      }
-
-      const updated = projectRepo.update(id, {
-        name: name !== undefined ? String(name).trim() : undefined,
-        slug: cleanSlug,
-        description: description !== undefined ? String(description).trim() : undefined,
-        cakto_product_id: cakto_product_id !== undefined ? String(cakto_product_id).trim() : undefined,
-        cakto_webhook_secret: cakto_webhook_secret !== undefined ? String(cakto_webhook_secret).trim() : undefined,
-        is_active: is_active !== undefined ? Number(is_active) : undefined,
-      });
-
-      res.status(200).json({ success: true, project: updated });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ success: false, error: msg });
+  router.post("/:id/clear-queue", (req, res) => {
+    const repos = createRepositories(database());
+    const id = req.params.id;
+    if (!repos.projects.findById(id) || workspaceFor(repos.db, id)?.archived_at) {
+      res.status(404).json({ error: "Projeto não encontrado." });
+      return;
     }
+    const result = repos.db.prepare(`
+      UPDATE message_queue SET status = 'CANCELLED', updated_at = datetime('now') WHERE project_id = ? AND status = 'PENDING'
+    `).run(id);
+    res.json({ success: true, deleted_count: 0, cancelled_count: result.changes });
   });
-
-  // DELETE /api/projects/:id - Excluir projeto
-  router.delete("/:id", (req: Request, res: Response): void => {
-    try {
-      const { projectRepo } = getRepos();
-      const id = String(req.params.id);
-
-      if (id === "default") {
-        res.status(400).json({
-          success: false,
-          error: "Operacao proibidda: o projeto padrao 'default' nao pode ser excluido.",
-        });
-        return;
-      }
-
-      const success = projectRepo.delete(id);
-      if (!success) {
-        res.status(404).json({ success: false, error: "Projeto nao encontrado." });
-        return;
-      }
-
-      res.status(200).json({ success: true, message: "Projeto excluido com sucesso." });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ success: false, error: msg });
-    }
-  });
-
-  // POST /api/projects/:id/clear-queue - Limpar apenas a fila de mensagens do projeto
-  router.post("/:id/clear-queue", (req: Request, res: Response): void => {
-    try {
-      const { queueRepo } = getRepos();
-      const projectId = String(req.params.id);
-      const deletedCount = queueRepo.clearQueue(projectId);
-
-      res.status(200).json({
-        success: true,
-        message: `Fila de mensagens do projeto '${projectId}' limpa com sucesso.`,
-        deleted_count: deletedCount,
-      });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ success: false, error: msg });
-    }
-  });
-
   return router;
 }
 

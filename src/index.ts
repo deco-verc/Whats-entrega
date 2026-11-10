@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { env, validatePort, ensureDataDirectoriesExist } from "./config/env.js";
 import { initDatabase, closeDatabase } from "./database/connection.js";
-import { seedDefaultTemplates, seedFunnelTemplates } from "./database/repositories.js";
+import { MessageQueueRepository, seedFunnelTemplates } from "./database/repositories.js";
 import {
   initWhatsAppSocket,
   disconnectWhatsApp,
@@ -14,6 +14,7 @@ import {
 import { startWebhookServer } from "./webhooks/server.js";
 import { QueueWorker, createQueueWorker } from "./engine/worker.js";
 import { funnelStateMachine } from "./engine/state-machine.js";
+import { resolveBrazilianPhoneCandidates } from "./whatsapp/dispatcher.js";
 
 // ============================================================================
 // Tipos e Interfaces do Entrypoint
@@ -47,7 +48,10 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<AppInst
   ensureDataDirectoriesExist();
 
   console.log("[System] Conectando ao SQLite (WAL Mode)...");
-  initDatabase();
+  const db = initDatabase();
+  if (shouldStartWorker) {
+    new MessageQueueRepository(db).recoverInterrupted();
+  }
   seedFunnelTemplates();
 
   // 1. Inicializacao do WhatsApp Baileys
@@ -63,6 +67,17 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<AppInst
         if (!inbound.text || inbound.isGroup) return;
 
         try {
+          if (/^(?:sair|parar|stop|descadastrar|cancelar mensagens)[.!\s]*$/i.test(inbound.text.trim())) {
+            const address = [inbound.fromJid, inbound.rawMessage.key.remoteJidAlt].find((jid) => jid?.endsWith("@s.whatsapp.net"));
+            if (address) {
+              const { candidates } = resolveBrazilianPhoneCandidates(address.split("@")[0].split(":")[0]);
+              db.transaction(() => {
+                const insert = db.prepare("INSERT OR IGNORE INTO whatsapp_opt_out (phone) VALUES (?)");
+                for (const phone of candidates) insert.run(phone);
+              })();
+            }
+            return;
+          }
           const result = funnelStateMachine.handleInboundMessage({
             phoneOrJid: inbound.fromJid,
             text: inbound.text,
@@ -89,12 +104,14 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<AppInst
 
   // 2. Inicializacao do Servidor HTTP de Webhooks Cakto
   let httpServer: http.Server | null = null;
+  let worker: QueueWorker;
   if (shouldStartHttp) {
     console.log(`[System] Inicializando servidor HTTP de Webhooks na porta ${effectivePort}...`);
     httpServer = await startWebhookServer({
       port: effectivePort,
       host: effectiveHost,
       sock: () => getWhatsAppSocket(),
+      diagnostics: () => worker?.getStatus() ?? null,
     });
     console.log(`[System] Servidor HTTP ativo na porta ${effectivePort}`);
   } else {
@@ -104,7 +121,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<AppInst
 
   // 3. Inicializacao do Worker de Fila Anti-Banimento
   console.log("[System] Inicializando Worker de Fila Anti-Banimento...");
-  const worker = createQueueWorker({
+  worker = createQueueWorker({
     pollIntervalMs: options.pollIntervalMs ?? 5000,
     sock: () => getWhatsAppSocket(),
     autoStart: shouldStartWorker,

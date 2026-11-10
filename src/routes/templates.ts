@@ -22,7 +22,7 @@ export function createTemplatesRouter(options: TemplateRouterOptions = {}): Rout
   router.get("/", (req: Request, res: Response): void => {
     try {
       const repo = getRepo();
-      const projectId = req.query.project_id ? String(req.query.project_id) : undefined;
+      const projectId = typeof req.query.project_id === "string" ? req.query.project_id : "default";
       const templates = repo.findAll(projectId);
       res.status(200).json({ success: true, templates });
     } catch (err: unknown) {
@@ -40,7 +40,7 @@ export function createTemplatesRouter(options: TemplateRouterOptions = {}): Rout
       let textToPreview = content;
       if (!textToPreview && templateId) {
         const tpl = repo.findById(String(templateId));
-        if (tpl) {
+        if (tpl && tpl.project_id === (req.query.project_id ?? req.body?.project_id ?? "default")) {
           textToPreview = tpl.content;
         }
       }
@@ -92,7 +92,7 @@ export function createTemplatesRouter(options: TemplateRouterOptions = {}): Rout
       const repo = getRepo();
       const id = String(req.params.id);
       const template = repo.findById(id);
-      if (!template) {
+      if (template?.project_id !== (req.query.project_id ?? "default")) {
         res.status(404).json({ success: false, error: "Template nao encontrado." });
         return;
       }
@@ -158,7 +158,7 @@ export function createTemplatesRouter(options: TemplateRouterOptions = {}): Rout
       const { name, content, tags, media_path, mediaPath, project_id, projectId } = req.body || {};
 
       const existing = repo.findById(id);
-      if (!existing) {
+      if (existing?.project_id !== (req.query.project_id ?? project_id ?? projectId ?? "default")) {
         res.status(404).json({ success: false, error: "Template nao encontrado." });
         return;
       }
@@ -187,7 +187,6 @@ export function createTemplatesRouter(options: TemplateRouterOptions = {}): Rout
         content,
         tags,
         media_path: media_path || mediaPath,
-        project_id: project_id || projectId,
       });
 
       res.status(200).json({ success: true, template: updated });
@@ -203,7 +202,7 @@ export function createTemplatesRouter(options: TemplateRouterOptions = {}): Rout
       const repo = getRepo();
       const id = String(req.params.id);
 
-      const deleted = repo.delete(id);
+      const deleted = repo.findById(id)?.project_id === (req.query.project_id ?? "default") && repo.delete(id);
       if (!deleted) {
         res.status(404).json({ success: false, error: "Template nao encontrado." });
         return;

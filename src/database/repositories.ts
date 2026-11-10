@@ -226,8 +226,8 @@ function stringifyPayload(payload: string | Record<string, unknown>): string {
 export class CustomerRepository {
   private readonly db: Database.Database;
   private readonly stmtFindById: Database.Statement<[string]>;
-  private readonly stmtFindByPhone: Database.Statement<[string]>;
-  private readonly stmtFindByJid: Database.Statement<[string]>;
+  private readonly stmtFindByPhone: Database.Statement<[string, string]>;
+  private readonly stmtFindByJid: Database.Statement<[string, string]>;
   private readonly stmtInsert: Database.Statement<[string, string, string | null, string, string | null, string, string]>;
   private readonly stmtUpdate: Database.Statement<[string, string | null, string | null, string | null, string]>;
   private readonly stmtUpdateState: Database.Statement<[string, string]>;
@@ -235,11 +235,15 @@ export class CustomerRepository {
   private readonly stmtListAll: Database.Statement<[number, number]>;
   private readonly stmtCount: Database.Statement<[]>;
 
+  public get database(): Database.Database {
+    return this.db;
+  }
+
   constructor(db: Database.Database = getDatabase()) {
     this.db = db;
     this.stmtFindById = db.prepare<[string]>(`SELECT * FROM customers WHERE id = ?`);
-    this.stmtFindByPhone = db.prepare<[string]>(`SELECT * FROM customers WHERE phone = ?`);
-    this.stmtFindByJid = db.prepare<[string]>(`SELECT * FROM customers WHERE jid = ?`);
+    this.stmtFindByPhone = db.prepare(`SELECT * FROM customers WHERE phone = ? AND project_id = ?`);
+    this.stmtFindByJid = db.prepare(`SELECT * FROM customers WHERE jid = ? AND project_id = ?`);
     this.stmtInsert = db.prepare<[string, string, string | null, string, string | null, string, string]>(`
       INSERT INTO customers (id, phone, jid, name, email, current_state, created_at, updated_at, project_id)
       VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), ?)
@@ -282,16 +286,26 @@ export class CustomerRepository {
     return row ?? null;
   }
 
-  public findByPhone(phone: string): Customer | null {
+  public findByPhone(phone: string, projectId = "default"): Customer | null {
     const cleanPhone = phone.trim();
-    const row = this.stmtFindByPhone.get(cleanPhone) as Customer | undefined;
+    const row = this.stmtFindByPhone.get(cleanPhone, projectId) as Customer | undefined;
     return row ?? null;
   }
 
-  public findByJid(jid: string): Customer | null {
+  public findByJid(jid: string, projectId = "default"): Customer | null {
     const cleanJid = jid.trim();
-    const row = this.stmtFindByJid.get(cleanJid) as Customer | undefined;
+    const row = this.stmtFindByJid.get(cleanJid, projectId) as Customer | undefined;
     return row ?? null;
+  }
+
+  public findInboundCustomer(jid: string, phones: string[], projectId?: string): Customer | null {
+    const matches = this.db.prepare(`
+      SELECT c.* FROM customers c JOIN projects p ON p.id = c.project_id
+      WHERE p.is_active = 1 AND (? IS NULL OR c.project_id = ?)
+        AND (c.jid = ? OR c.phone IN (SELECT value FROM json_each(?)))
+      LIMIT 2
+    `).all(projectId ?? null, projectId ?? null, jid, JSON.stringify(phones)) as Customer[];
+    return matches.length === 1 ? matches[0] : null;
   }
 
   public upsert(input: UpsertCustomerInput): Customer {
@@ -300,7 +314,7 @@ export class CustomerRepository {
     const projectId = input.project_id?.trim() || "default";
 
     return this.db.transaction(() => {
-      const existing = this.findByPhone(cleanPhone);
+      const existing = this.findByPhone(cleanPhone, projectId);
       if (existing) {
         const updated = this.stmtUpdate.get(
           cleanName,
@@ -374,9 +388,9 @@ export class CustomerRepository {
 export class OrderRepository {
   private readonly db: Database.Database;
   private readonly stmtFindById: Database.Statement<[string]>;
-  private readonly stmtFindByTransactionAndEvent: Database.Statement<[string, string]>;
+  private readonly stmtFindByTransactionAndEvent: Database.Statement<[string, string, string]>;
   private readonly stmtListByCustomer: Database.Statement<[string]>;
-  private readonly stmtListByTransaction: Database.Statement<[string]>;
+  private readonly stmtListByTransaction: Database.Statement<[string, string]>;
   private readonly stmtListAll: Database.Statement<[number, number]>;
   private readonly stmtCount: Database.Statement<[]>;
   private readonly stmtInsert: Database.Statement<[string, string, string, string, string, string, string, string | null, string, string]>;
@@ -384,14 +398,14 @@ export class OrderRepository {
   constructor(db: Database.Database = getDatabase()) {
     this.db = db;
     this.stmtFindById = db.prepare<[string]>(`SELECT * FROM orders WHERE id = ?`);
-    this.stmtFindByTransactionAndEvent = db.prepare<[string, string]>(`
-      SELECT * FROM orders WHERE transaction_id = ? AND event_type = ?
+    this.stmtFindByTransactionAndEvent = db.prepare(`
+      SELECT * FROM orders WHERE transaction_id = ? AND event_type = ? AND project_id = ?
     `);
     this.stmtListByCustomer = db.prepare<[string]>(`
       SELECT * FROM orders WHERE customer_id = ? ORDER BY created_at DESC
     `);
-    this.stmtListByTransaction = db.prepare<[string]>(`
-      SELECT * FROM orders WHERE transaction_id = ? ORDER BY created_at DESC
+    this.stmtListByTransaction = db.prepare(`
+      SELECT * FROM orders WHERE transaction_id = ? AND project_id = ? ORDER BY created_at DESC
     `);
     this.stmtListAll = db.prepare<[number, number]>(`
       SELECT * FROM orders ORDER BY created_at DESC LIMIT ? OFFSET ?
@@ -412,8 +426,8 @@ export class OrderRepository {
     return row ?? null;
   }
 
-  public findByTransactionAndEvent(transactionId: string, eventType: string): Order | null {
-    const row = this.stmtFindByTransactionAndEvent.get(transactionId.trim(), eventType.trim()) as Order | undefined;
+  public findByTransactionAndEvent(transactionId: string, eventType: string, projectId = "default"): Order | null {
+    const row = this.stmtFindByTransactionAndEvent.get(transactionId.trim(), eventType.trim(), projectId) as Order | undefined;
     return row ?? null;
   }
 
@@ -422,6 +436,9 @@ export class OrderRepository {
     const payload = stringifyPayload(input.raw_payload);
     const paidAt = input.paid_at ? normalizeIsoDate(input.paid_at) : null;
     const projectId = input.project_id?.trim() || "default";
+    if (!this.db.prepare("SELECT 1 FROM customers WHERE id = ? AND project_id = ?").get(input.customer_id.trim(), projectId)) {
+      throw new Error("Cliente não pertence ao projeto do pedido.");
+    }
 
     const created = this.stmtInsert.get(
       id,
@@ -440,11 +457,11 @@ export class OrderRepository {
   }
 
   /**
-   * Idempotent insert: checks UNIQUE(transaction_id, event_type).
+   * Idempotent insert within the project.
    * Returns { order, inserted: true } if inserted, or { order, inserted: false } if already existed.
    */
   public createOrIgnore(input: CreateOrderInput): { order: Order; inserted: boolean } {
-    const existing = this.findByTransactionAndEvent(input.transaction_id, input.event_type);
+    const existing = this.findByTransactionAndEvent(input.transaction_id, input.event_type, input.project_id?.trim());
     if (existing) {
       return { order: existing, inserted: false };
     }
@@ -454,7 +471,7 @@ export class OrderRepository {
       return { order, inserted: true };
     } catch (error: unknown) {
       // Handle potential race condition where another process inserted simultaneously
-      const conflictCheck = this.findByTransactionAndEvent(input.transaction_id, input.event_type);
+      const conflictCheck = this.findByTransactionAndEvent(input.transaction_id, input.event_type, input.project_id?.trim());
       if (conflictCheck) {
         return { order: conflictCheck, inserted: false };
       }
@@ -466,8 +483,8 @@ export class OrderRepository {
     return this.stmtListByCustomer.all(customerId) as Order[];
   }
 
-  public listByTransactionId(transactionId: string): Order[] {
-    return this.stmtListByTransaction.all(transactionId) as Order[];
+  public listByTransactionId(transactionId: string, projectId = "default"): Order[] {
+    return this.stmtListByTransaction.all(transactionId, projectId) as Order[];
   }
 
   public listAll(limit = 100, offset = 0, projectId?: string): Order[] {
@@ -530,12 +547,14 @@ export class MessageQueueRepository {
     this.stmtFindDueJobs = db.prepare<[string, number]>(`
       SELECT * FROM message_queue
       WHERE status = 'PENDING' AND scheduled_at <= ?
+        AND project_id IN (SELECT id FROM projects WHERE is_active = 1)
       ORDER BY scheduled_at ASC
       LIMIT ?
     `);
     this.stmtFindNextDue = db.prepare<[string]>(`
       SELECT * FROM message_queue
       WHERE status = 'PENDING' AND scheduled_at <= ?
+        AND project_id IN (SELECT id FROM projects WHERE is_active = 1)
       ORDER BY scheduled_at ASC
       LIMIT 1
     `);
@@ -553,6 +572,7 @@ export class MessageQueueRepository {
           attempts = attempts + 1,
           updated_at = datetime('now')
       WHERE id = ? AND status = 'PENDING'
+        AND project_id IN (SELECT id FROM projects WHERE is_active = 1)
     `);
     this.stmtMarkSent = db.prepare<[string]>(`
       UPDATE message_queue
@@ -621,22 +641,27 @@ export class MessageQueueRepository {
     return row ?? null;
   }
 
+  public recoverInterrupted(): void {
+    this.db.transaction(() => {
+      this.db.prepare(`
+        UPDATE message_queue
+        SET status = 'PENDING', attempts = MAX(0, attempts - 1), updated_at = datetime('now')
+        WHERE status = 'PROCESSING' AND id NOT IN (SELECT job_id FROM queue_dispatch_attempts)
+      `).run();
+      this.db.prepare(`
+        UPDATE message_queue SET status = 'FAILED', last_error = 'ENVIO_INDETERMINADO', updated_at = datetime('now')
+        WHERE status = 'PROCESSING'
+      `).run();
+    }).immediate();
+  }
+
   public enqueue(input: EnqueueJobInput): QueueJob {
     const id = input.id ?? `job_${randomUUID()}`;
     const scheduledAt = normalizeIsoDate(input.scheduled_at);
     const status = input.status ?? "PENDING";
-    let projectId = input.project_id?.trim();
-    if (!projectId && input.customer_id) {
-      try {
-        const cust = this.stmtFindCustomerProject.get(input.customer_id.trim()) as { project_id?: string } | undefined;
-        if (cust?.project_id) {
-          projectId = cust.project_id;
-        }
-      } catch {
-        // Fallback
-      }
-    }
-    projectId = projectId || "default";
+    const customer = this.stmtFindCustomerProject.get(input.customer_id.trim()) as { project_id: string } | undefined;
+    const projectId = input.project_id?.trim() || customer?.project_id || "default";
+    if (!customer || customer.project_id !== projectId) throw new Error("Cliente não pertence ao projeto do agendamento.");
 
     const job = this.stmtInsert.get(
       id,
@@ -1334,11 +1359,15 @@ export class FunnelTriggerRepository {
     this.db = db;
   }
 
+  public templateBelongsToProject(templateId: string, projectId: string): boolean {
+    return Boolean(this.db.prepare("SELECT 1 FROM message_templates WHERE id = ? AND project_id = ?").get(templateId, projectId));
+  }
+
   public findById(id: string): FunnelTrigger | null {
     const row = this.db.prepare(`
       SELECT ft.*, mt.name as template_name, mt.content as template_content
       FROM funnel_triggers ft
-      LEFT JOIN message_templates mt ON ft.template_id = mt.id
+      LEFT JOIN message_templates mt ON ft.template_id = mt.id AND mt.project_id = ft.project_id
       WHERE ft.id = ?
     `).get(id) as FunnelTrigger | undefined;
     return row ?? null;
@@ -1350,11 +1379,11 @@ export class FunnelTriggerRepository {
     const row = this.db.prepare(`
       SELECT ft.*, mt.name as template_name, mt.content as template_content
       FROM funnel_triggers ft
-      LEFT JOIN message_templates mt ON ft.template_id = mt.id
-      WHERE (ft.project_id = ? OR ft.project_id = 'default') AND (ft.trigger_key = ? OR ft.trigger_key = CASE WHEN ? = 'PIX_RECOVERY' THEN 'ABANDONMENT_RECOVERY' WHEN ? = 'ABANDONMENT_RECOVERY' THEN 'PIX_RECOVERY' ELSE ? END)
-      ORDER BY CASE WHEN ft.project_id = ? THEN 0 ELSE 1 END
+      LEFT JOIN message_templates mt ON ft.template_id = mt.id AND mt.project_id = ft.project_id
+      WHERE ft.project_id = ? AND (ft.trigger_key = ? OR ft.trigger_key = CASE WHEN ? = 'PIX_RECOVERY' THEN 'ABANDONMENT_RECOVERY' WHEN ? = 'ABANDONMENT_RECOVERY' THEN 'PIX_RECOVERY' ELSE ? END)
+      ORDER BY ft.trigger_key = ? DESC
       LIMIT 1
-    `).get(cleanProj, cleanKey, cleanKey, cleanKey, cleanKey, cleanProj) as FunnelTrigger | undefined;
+    `).get(cleanProj, cleanKey, cleanKey, cleanKey, cleanKey, cleanKey) as FunnelTrigger | undefined;
     return row ?? null;
   }
 
@@ -1364,14 +1393,14 @@ export class FunnelTriggerRepository {
       return this.db.prepare(`
         SELECT ft.*, mt.name as template_name, mt.content as template_content
         FROM funnel_triggers ft
-        LEFT JOIN message_templates mt ON ft.template_id = mt.id
+        LEFT JOIN message_templates mt ON ft.template_id = mt.id AND mt.project_id = ft.project_id
         ORDER BY ft.created_at ASC
       `).all() as FunnelTrigger[];
     }
     return this.db.prepare(`
       SELECT ft.*, mt.name as template_name, mt.content as template_content
       FROM funnel_triggers ft
-      LEFT JOIN message_templates mt ON ft.template_id = mt.id
+      LEFT JOIN message_templates mt ON ft.template_id = mt.id AND mt.project_id = ft.project_id
       WHERE ft.project_id = ?
       ORDER BY ft.created_at ASC
     `).all(cleanProj) as FunnelTrigger[];
@@ -1446,9 +1475,6 @@ export class FunnelTriggerRepository {
   }
 
   public seedDefaultTriggers(projectId = "default", force = false): number {
-    const existing = this.listByProject(projectId);
-    if (!force && existing.length > 0) return 0;
-
     const defaults: CreateTriggerInput[] = [
       {
         id: `trg_${projectId}_abandonment`,
@@ -1541,7 +1567,10 @@ export class FunnelTriggerRepository {
     ];
 
     let inserted = 0;
-    for (const def of defaults) {
+    for (const definition of defaults) {
+      const def = projectId === "default" ? definition : {
+        ...definition, is_active: 0, template_id: null, media_path: null,
+      };
       const existingTrg = this.findByKey(projectId, def.trigger_key);
       if (!existingTrg) {
         this.create(def);

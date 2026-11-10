@@ -1,8 +1,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { env, ensureDataDirectoriesExist } from "../config/env.js";
+import { PROJECT_WORKSPACE_SCHEMA } from "./project-workspace.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -31,14 +33,15 @@ CREATE INDEX IF NOT EXISTS idx_projects_cakto_product_id ON projects (cakto_prod
 CREATE TABLE IF NOT EXISTS customers (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL DEFAULT 'default',
-  phone TEXT NOT NULL UNIQUE,
+  phone TEXT NOT NULL,
   jid TEXT,
   name TEXT NOT NULL,
   email TEXT,
   current_state TEXT NOT NULL DEFAULT 'NEW',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE
+  FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE,
+  UNIQUE (project_id, phone)
 );
 
 CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers (phone);
@@ -58,7 +61,7 @@ CREATE TABLE IF NOT EXISTS orders (
   paid_at TEXT,
   raw_payload TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  CONSTRAINT uq_orders_transaction_event UNIQUE (transaction_id, event_type),
+  CONSTRAINT uq_orders_transaction_event UNIQUE (project_id, transaction_id, event_type),
   FOREIGN KEY (customer_id) REFERENCES customers (id) ON DELETE CASCADE,
   FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE
 );
@@ -168,6 +171,68 @@ export function loadSchemaSql(): string {
 }
 
 export function applySchema(db: Database.Database): void {
+  const schemaSql = loadSchemaSql();
+  const version = db.pragma("user_version", { simple: true }) as number;
+  const needsProjectMigration = version < 1;
+  const hasLegacyData = Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name IN ('projects', 'customers', 'orders')").get());
+  if (needsProjectMigration && hasLegacyData && db.name !== ":memory:") {
+    const backup = `${db.name}.pre-project-scope-${randomUUID()}.bak`;
+    fs.closeSync(fs.openSync(backup, "wx", 0o600));
+    try {
+      db.prepare("VACUUM INTO ?").run(backup);
+    } catch (error) {
+      fs.unlinkSync(backup);
+      throw error;
+    }
+  }
+
+  if (!needsProjectMigration) {
+    db.exec(schemaSql);
+    db.exec(PROJECT_WORKSPACE_SCHEMA);
+    return;
+  }
+
+  db.pragma("foreign_keys = OFF");
+  try {
+    db.transaction(() => {
+      if (Number(db.pragma("user_version", { simple: true })) >= 1) return;
+      initializeProjectSchema(db, schemaSql);
+      for (const table of hasLegacyData ? ["customers", "orders"] : []) {
+        const ddl = schemaSql.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\(.*?\\n\\);`, "s"))?.[0];
+        if (!ddl) throw new Error(`DDL ausente para ${table}`);
+        const columns = table === "customers"
+          ? "id, project_id, phone, jid, name, email, current_state, created_at, updated_at"
+          : "id, project_id, transaction_id, customer_id, product_id, offer_id, event_type, status, paid_at, raw_payload, created_at";
+        const expected = new Set(columns.split(", "));
+        const existing = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+        const auxiliary = db.prepare("SELECT sql FROM sqlite_master WHERE tbl_name = ? AND type IN ('index', 'trigger') AND sql IS NOT NULL")
+          .all(table) as Array<{ sql: string }>;
+        if (existing.length !== expected.size || existing.some(({ name }) => !expected.has(name))) {
+          throw new Error(`O esquema de ${table} tem colunas inesperadas. Revise o banco antes de migrar.`);
+        }
+        db.exec(ddl.replace(`IF NOT EXISTS ${table}`, `${table}_project_scope`));
+        db.exec(`INSERT INTO ${table}_project_scope (${columns}) SELECT ${columns} FROM ${table};
+          DROP TABLE ${table};
+          ALTER TABLE ${table}_project_scope RENAME TO ${table};`);
+        for (const { sql } of auxiliary) db.exec(sql);
+      }
+      db.exec(schemaSql);
+      db.exec(PROJECT_WORKSPACE_SCHEMA);
+      db.prepare(`
+        INSERT OR IGNORE INTO queue_dispatch_attempts (job_id)
+        SELECT id FROM message_queue WHERE status = 'PROCESSING'
+      `).run();
+      if (db.prepare("PRAGMA foreign_key_check").all().length || db.pragma("quick_check", { simple: true }) !== "ok") {
+        throw new Error("A migração de projetos falhou na verificação de integridade do SQLite.");
+      }
+      db.pragma("user_version = 1");
+    }).immediate();
+  } finally {
+    db.pragma("foreign_keys = ON");
+  }
+}
+
+function initializeProjectSchema(db: Database.Database, schemaSql: string): void {
   // 1. Garante tabela de projetos e projeto default antes de tabelas filhas
   try {
     db.exec(`
@@ -200,7 +265,6 @@ export function applySchema(db: Database.Database): void {
   }
 
   // 3. Aplica o schema completo DDL
-  const schemaSql = loadSchemaSql();
   db.exec(schemaSql);
 
   // 4. Garante registro default presente
@@ -252,7 +316,12 @@ export function createDatabaseConnection(
   db.pragma(`busy_timeout = ${timeout};`);
 
   if (applyMigrations && !readonly) {
-    applySchema(db);
+    try {
+      applySchema(db);
+    } catch (error) {
+      db.close();
+      throw error;
+    }
   }
 
   return db;

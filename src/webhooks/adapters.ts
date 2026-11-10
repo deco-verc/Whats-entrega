@@ -21,6 +21,9 @@ export interface NormalizedCaktoPayload {
   readonly transactionId: string;
   readonly eventType: string;
   readonly status: string;
+  readonly offerType?: string;
+  readonly amount?: number;
+  readonly currency?: string;
   readonly customer: {
     readonly name: string;
     readonly phone: string;
@@ -78,6 +81,13 @@ export function computeCaktoHmac(
 ): string {
   const content = typeof payload === "string" ? payload : JSON.stringify(payload);
   return crypto.createHmac("sha256", secret.trim()).update(content).digest("hex");
+}
+
+export function validateCaktoSignature(raw: Buffer | undefined, timestamp: string | undefined, signature: string | undefined, secret: string): boolean {
+  if (!raw || !secret || !timestamp || !/^\d{10}$/.test(timestamp) || !signature || !/^v1=[0-9a-f]{64}$/i.test(signature)) return false;
+  if (Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) return false;
+  const expected = crypto.createHmac("sha256", secret).update(`${timestamp}.`).update(raw).digest();
+  return crypto.timingSafeEqual(expected, Buffer.from(signature.slice(3), "hex"));
 }
 
 /**
@@ -138,37 +148,36 @@ export function normalizeEventType(rawEvent: string | undefined | null, rawStatu
     event === "purchase_approved" ||
     event === "approved" ||
     event === "paid" ||
-    status === "approved" ||
-    status === "paid"
+    (!event && (status === "approved" || status === "paid"))
   ) {
     return "purchase_approved";
   }
 
   if (
     event === "pix_generated" ||
+    event === "pix_gerado" ||
     event === "waiting_payment" ||
-    status === "waiting_payment" ||
-    status === "pending"
+    (!event && (status === "waiting_payment" || status === "pending"))
   ) {
     return "pix_generated";
   }
 
-  if (event === "boleto_generated" || status === "boleto_printed") {
+  if (event === "boleto_generated" || event === "boleto_gerado" || (!event && status === "boleto_printed")) {
     return "boleto_generated";
   }
 
   if (
     event === "purchase_refunded" ||
+    event === "refund" ||
     event === "refunded" ||
-    status === "refunded"
+    (!event && status === "refunded")
   ) {
     return "purchase_refunded";
   }
 
   if (
     event === "chargeback" ||
-    status === "chargeback" ||
-    status === "dispute"
+    (!event && (status === "chargeback" || status === "dispute"))
   ) {
     return "chargeback";
   }
@@ -188,8 +197,12 @@ export function normalizeCaktoWebhook(rawBody: unknown): NormalizedCaktoPayload 
   const data = (body.data && typeof body.data === "object" ? body.data : body) as Record<string, any>;
 
   // Extrai identificador da transação
+  const abandonment = body.event === "checkout_abandonment";
+  const abandonmentKey = abandonment && data.offer?.id && data.createdAt && (data.customerEmail || data.customerCellphone)
+    ? "abandonment_" + crypto.createHash("sha256").update(JSON.stringify([data.customerEmail || data.customerCellphone, data.offer.id, data.createdAt])).digest("hex")
+    : "";
   const transactionId = String(
-    data.id || data.transaction_id || body.id || body.transaction_id || ""
+    data.id || data.transaction_id || body.id || body.transaction_id || abandonmentKey
   ).trim();
 
   if (!transactionId) {
@@ -205,7 +218,7 @@ export function normalizeCaktoWebhook(rawBody: unknown): NormalizedCaktoPayload 
   // Extrai dados do cliente
   const rawCustomer = data.customer || body.customer || {};
   const customerName = String(
-    rawCustomer.name || data.customer_name || body.customer_name || ""
+    rawCustomer.name || data.customerName || data.customer_name || body.customer_name || ""
   ).trim();
 
   if (!customerName) {
@@ -215,6 +228,7 @@ export function normalizeCaktoWebhook(rawBody: unknown): NormalizedCaktoPayload 
   const rawPhone = String(
     rawCustomer.phone ||
     rawCustomer.cellphone ||
+    data.customerCellphone ||
     data.customer_phone ||
     body.customer_phone ||
     ""
@@ -226,8 +240,8 @@ export function normalizeCaktoWebhook(rawBody: unknown): NormalizedCaktoPayload 
 
   const customerPhone = sanitizePhone(rawPhone);
   const customerEmail =
-    rawCustomer.email || data.customer_email || body.customer_email
-      ? String(rawCustomer.email || data.customer_email || body.customer_email).trim()
+    rawCustomer.email || data.customerEmail || data.customer_email || body.customer_email
+      ? String(rawCustomer.email || data.customerEmail || data.customer_email || body.customer_email).trim()
       : null;
 
   // Extrai dados do produto e da oferta
@@ -242,7 +256,7 @@ export function normalizeCaktoWebhook(rawBody: unknown): NormalizedCaktoPayload 
   }
 
   const offerId = String(
-    rawOffer.id || data.offer_id || body.offer_id || `${productId}_default`
+    rawOffer.id || data.offer_id || body.offer_id || ""
   ).trim();
 
   // Extrai dados de Pix (se existirem)
@@ -251,7 +265,7 @@ export function normalizeCaktoWebhook(rawBody: unknown): NormalizedCaktoPayload 
 
   if (rawPix && typeof rawPix === "object") {
     pix = {
-      qrCodeText: rawPix.qr_code_text || rawPix.qrcode_text || rawPix.copy_paste || rawPix.code || undefined,
+      qrCodeText: rawPix.qrCode || rawPix.qr_code_text || rawPix.qrcode_text || rawPix.copy_paste || rawPix.code || undefined,
       qrCodeUrl: rawPix.qr_code_url || rawPix.qrcode_url || rawPix.url || undefined,
     };
   } else if (data.pix_code || body.pix_code || data.pix_qr_code || body.pix_qr_code) {
@@ -262,12 +276,17 @@ export function normalizeCaktoWebhook(rawBody: unknown): NormalizedCaktoPayload 
   }
 
   // Data de pagamento
-  const paidAt = data.paid_at || body.paid_at || (eventType === "purchase_approved" ? new Date().toISOString() : null);
+  const paidAt = data.paidAt || data.paid_at || body.paid_at || null;
+  const { secret: _secret, ...payload } = body;
+  const { secret: _nestedSecret, ...payloadData } = data;
 
   return {
     transactionId,
     eventType,
     status,
+    offerType: typeof data.offer_type === "string" ? data.offer_type : undefined,
+    amount: typeof data.amount === "number" && Number.isFinite(data.amount) ? data.amount : undefined,
+    currency: typeof data.currency === "string" ? data.currency : undefined,
     customer: {
       name: customerName,
       phone: customerPhone,
@@ -279,7 +298,7 @@ export function normalizeCaktoWebhook(rawBody: unknown): NormalizedCaktoPayload 
     },
     pix,
     paidAt: paidAt ? String(paidAt) : null,
-    rawPayload: body,
+    rawPayload: data === body ? payload : { ...payload, data: payloadData },
   };
 }
 
@@ -310,6 +329,13 @@ export function processNormalizedWebhook(
   const ordRepo = repos.orderRepo ?? orderRepository;
   const audRepo = repos.auditRepo ?? auditLogRepository;
   const targetProjectId = projectId || "default";
+  const duplicate = ordRepo.findByTransactionAndEvent(payload.transactionId, payload.eventType, targetProjectId);
+  if (duplicate) {
+    const customer = custRepo.findById(duplicate.customer_id);
+    if (!customer || customer.project_id !== targetProjectId) throw new Error("Pedido com vínculo de cliente inconsistente.");
+    audRepo.log("CAKTO_WEBHOOK", "DUPLICATE_IGNORED", "orders", duplicate.id, { transactionId: payload.transactionId, isDuplicate: true });
+    return { customer, order: duplicate, isDuplicate: true };
+  }
 
   // 1. Upsert do cliente por telefone
   const customer = custRepo.upsert({

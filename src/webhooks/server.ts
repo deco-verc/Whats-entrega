@@ -1,33 +1,35 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as http from "node:http";
+import { randomUUID } from "node:crypto";
 import express, { type Request, type Response, type NextFunction, type Application } from "express";
+import qrcode from "qrcode-generator";
 import { env, validatePort } from "../config/env.js";
 import { getDatabase } from "../database/connection.js";
 import { CATALOG } from "../config/catalog.js";
-import { funnelStateMachine, FunnelStateMachine } from "../engine/state-machine.js";
+import { FunnelStateMachine } from "../engine/state-machine.js";
 import { createRepositories } from "../database/repositories.js";
 import type { WASocket } from "@whiskeysockets/baileys";
 import { handleManualSend } from "../routes/manual-send.js";
 import { createTemplatesRouter } from "../routes/templates.js";
 import { createProjectsRouter } from "../routes/projects.js";
+import { createProjectWorkspaceRouter } from "../routes/project-workspace.js";
 import { createTriggersRouter } from "../routes/triggers.js";
-import { TemplateRepository, ProjectRepository, MessageQueueRepository, FunnelTriggerRepository } from "../database/repositories.js";
+import { protectAdministration } from "./admin-auth.js";
+import { linkedProducts, logWebhook, processProjectEvent } from "./project-events.js";
+import { AUTOMATION_EVENTS } from "../engine/project-automations.js";
+import { TemplateRepository } from "../database/repositories.js";
 import {
-  getWhatsAppConnectionStatus,
-  getWhatsAppConnectionState,
-  requestWhatsAppPairingCode,
-  logoutWhatsApp,
   whatsappManager,
   WhatsAppSocketManager,
 } from "../whatsapp/socket.js";
 
 import {
   validateCaktoSecret,
-  computeCaktoHmac,
   normalizeCaktoWebhook,
-  processNormalizedWebhook,
   sanitizePhone,
+  validateCaktoSignature,
+  type NormalizedCaktoPayload,
   type ProcessWebhookRepositories,
 } from "./adapters.js";
 
@@ -40,6 +42,9 @@ export interface WebhookServerOptions {
   readonly sock?: WASocket | null | (() => WASocket | null);
   readonly templateRepo?: TemplateRepository;
   readonly whatsappManager?: WhatsAppSocketManager;
+  readonly adminCredentials?: { username: string; password: string };
+  readonly requireAdmin?: boolean;
+  readonly diagnostics?: () => unknown;
 }
 
 /**
@@ -47,33 +52,34 @@ export interface WebhookServerOptions {
  */
 export function createWebhookApp(options: WebhookServerOptions = {}): Application {
   const app = express();
-  const publicDir = options.publicDir || path.resolve(process.cwd(), "public");
-
-  // Middlewares de seguranca e parsing de payload
-  app.use(express.json({ limit: "2mb" }));
-  app.use(express.urlencoded({ extended: true, limit: "2mb" }));
-
-  // Headers de seguranca (AppSec Invariants) e CORS para integracao com Cakto e navegadores
-  app.use((req: Request, res: Response, next: NextFunction) => {
+  const publicDir = path.resolve(options.publicDir ?? "public");
+  const database = () => options.repositories?.customerRepo?.database ?? getDatabase();
+  app.use((_req: Request, res: Response, next: NextFunction) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("X-Frame-Options", "DENY");
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Cakto-Signature, X-Cakto-Secret, X-Webhook-Secret");
-    if (req.method === "OPTIONS") {
-      res.status(204).end();
-      return;
-    }
     next();
   });
+  const { ADMIN_USERNAME, ADMIN_PASSWORD } = process.env;
+  app.use(protectAdministration(
+    options.adminCredentials ?? (ADMIN_USERNAME && ADMIN_PASSWORD ? { username: ADMIN_USERNAME, password: ADMIN_PASSWORD } : undefined),
+    env.isProduction || Boolean(options.requireAdmin || ADMIN_USERNAME || ADMIN_PASSWORD)
+  ));
+  app.use(express.json({
+    limit: "2mb",
+    verify(req, _res, body) {
+      (req as Request & { rawBody?: Buffer }).rawBody = body;
+    },
+  }));
+  app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 
   // Healthcheck obrigatorio
   const handleHealth = (_req: Request, res: Response) => {
-    res.status(200).json({
-      status: "ok",
-      uptime: process.uptime(),
-      timestamp: new Date().toISOString(),
-    });
+    try {
+      database().prepare("SELECT 1").get();
+      res.json({ status: "ok", database: "connected", uptime: process.uptime(), timestamp: new Date().toISOString() });
+    } catch {
+      res.status(503).json({ status: "error", database: "unavailable" });
+    }
   };
 
   app.get("/api/health", handleHealth);
@@ -134,10 +140,10 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
   app.get("/api/queue", (req: Request, res: Response) => {
     try {
       const db = getDatabase();
-      const projectId = req.query.project_id ? String(req.query.project_id).trim() : undefined;
+      const projectId = typeof req.query.project_id === "string" ? req.query.project_id.trim() || "default" : "default";
       let query = "SELECT id, project_id, customer_id, phone, message_type, content, scheduled_at, status, attempts, last_error, created_at FROM message_queue";
       const params: unknown[] = [];
-      if (projectId && projectId !== "all") {
+      if (projectId) {
         query += " WHERE project_id = ?";
         params.push(projectId);
       }
@@ -153,10 +159,9 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
   app.post("/api/queue/clear", (req: Request, res: Response) => {
     try {
       const db = getDatabase();
-      const queueRepo = new MessageQueueRepository(db);
       const projectId = (req.query.project_id ? String(req.query.project_id) : req.body?.project_id ? String(req.body.project_id) : undefined)?.trim();
-      const targetProject = projectId && projectId !== "all" ? projectId : undefined;
-      const deletedCount = queueRepo.clearQueue(targetProject);
+      const targetProject = projectId || "default";
+      const deletedCount = db.prepare("UPDATE message_queue SET status = 'CANCELLED', updated_at = datetime('now') WHERE project_id = ? AND status = 'PENDING'").run(targetProject).changes;
       res.status(200).json({
         success: true,
         message: targetProject
@@ -173,10 +178,10 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
   app.get("/api/orders", (req: Request, res: Response) => {
     try {
       const db = getDatabase();
-      const projectId = req.query.project_id ? String(req.query.project_id).trim() : undefined;
+      const projectId = typeof req.query.project_id === "string" ? req.query.project_id.trim() || "default" : "default";
       let query = "SELECT id, project_id, transaction_id, customer_id, product_id, offer_id, event_type, status, paid_at, created_at FROM orders";
       const params: unknown[] = [];
-      if (projectId && projectId !== "all") {
+      if (projectId) {
         query += " WHERE project_id = ?";
         params.push(projectId);
       }
@@ -191,10 +196,10 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
   app.get("/api/customers", (req: Request, res: Response) => {
     try {
       const db = getDatabase();
-      const projectId = req.query.project_id ? String(req.query.project_id).trim() : undefined;
+      const projectId = typeof req.query.project_id === "string" ? req.query.project_id.trim() || "default" : "default";
       let query = "SELECT id, project_id, phone, name, email, current_state, jid, created_at FROM customers";
       const params: unknown[] = [];
-      if (projectId && projectId !== "all") {
+      if (projectId) {
         query += " WHERE project_id = ?";
         params.push(projectId);
       }
@@ -252,6 +257,24 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
       pairing_code: manager.getPairingCode(),
       pairingCode: manager.getPairingCode(),
     });
+  });
+
+  app.get("/api/whatsapp/qr", (_req, res) => {
+    const raw = (options.whatsappManager ?? whatsappManager).getQr();
+    if (!raw) {
+      res.status(404).json({ error: "Nenhum QR disponível." });
+      return;
+    }
+    const qr = qrcode(0, "M");
+    qr.addData(raw);
+    qr.make();
+    res.type("image/svg+xml").send(qr.createSvgTag(4, 16));
+  });
+
+  app.post("/api/whatsapp/reconnect", async (_req, res) => {
+    const manager = options.whatsappManager ?? whatsappManager;
+    await manager.connect();
+    res.json({ success: true, status: manager.getStatus() });
   });
 
   app.post("/api/whatsapp/pair", async (req: Request, res: Response): Promise<void> => {
@@ -344,14 +367,8 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
   );
 
   // Gestao de Projetos Multi-Tenant (src/routes/projects.ts)
-  app.use(
-    "/api/projects",
-    createProjectsRouter({
-      templateRepo: effectiveTemplateRepo,
-      customerRepo: options.repositories?.customerRepo,
-      orderRepo: options.repositories?.orderRepo,
-    })
-  );
+  app.use("/api/projects", createProjectsRouter(database));
+  app.use("/api/projects", createProjectWorkspaceRouter(database, options));
 
   // Gestao de Gatilhos e Regras de Automacao (src/routes/triggers.ts)
   app.use(
@@ -361,177 +378,107 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
     })
   );
 
-  // Instância da máquina de estados contextualizada
-  const getEffectiveStateMachine = (): FunnelStateMachine => {
-    if (options.repositories?.customerRepo && (options.repositories.customerRepo as any).db) {
-      try {
-        const customRepos = createRepositories((options.repositories.customerRepo as any).db);
-        return new FunnelStateMachine(customRepos);
-      } catch {
-        return funnelStateMachine;
-      }
-    }
-    return funnelStateMachine;
-  };
+  const getEventRepos = () => createRepositories(database());
 
-  // Endpoint receptor do Webhook da Cakto (com suporte multi-projeto)
-  const handleCaktoWebhook = async (req: Request, res: Response): Promise<void> => {
-    const startTime = Date.now();
+  const handleCaktoWebhook = (req: Request, res: Response): void => {
+    const started = Date.now();
+    const repos = getEventRepos();
+    const projectRepo = repos.projects;
+    const slug = req.params.project_slug;
+    const projectRef = req.query.project_id ?? req.query.project;
+    const rawRecords: Array<Record<string, any> | undefined> = Array.isArray(req.body?.data) ? req.body.data : [req.body?.data ?? req.body];
+    const productIds = rawRecords.map((item) => item?.product?.id ?? item?.product_id);
+    const candidates = slug || projectRef ? [] : projectRepo.listAll().filter((project) =>
+      !repos.db.prepare("SELECT 1 FROM project_workspace WHERE project_id = ? AND archived_at IS NOT NULL").get(project.id) &&
+      productIds.some((id) => linkedProducts(repos, project).includes(id)));
+    if (candidates.length > 1) {
+      res.status(409).json({ error: "Use a URL exclusiva do projeto para este produto." });
+      return;
+    }
+    const project = typeof slug === "string" ? projectRepo.findBySlug(slug)
+      : typeof projectRef === "string" ? projectRepo.findById(projectRef) ?? projectRepo.findBySlug(projectRef)
+      : candidates[0] ?? projectRepo.findById("default");
+
+    if (!project || repos.db.prepare("SELECT 1 FROM project_workspace WHERE project_id = ? AND archived_at IS NOT NULL").get(project.id)) {
+      res.status(404).json({ error: "Projeto não encontrado." });
+      return;
+    }
+
+    const signature = req.get("X-Cakto-Signature");
+    const timestamp = req.get("X-Cakto-Timestamp");
+    const secret = project.cakto_webhook_secret ?? (project.id === "default" ? options.secret ?? env.caktoWebhookSecret : "");
+    const isSigned = Boolean(timestamp || signature?.startsWith("v1="));
+    const legacySecret = project.id === "default" ? (
+      signature || req.get("X-Cakto-Secret") || req.get("X-Webhook-Secret") ||
+      req.get("Authorization")?.match(/^Bearer (.+)$/)?.[1] || (!env.isProduction ? req.query.secret || req.query.token : undefined)
+    ) : undefined;
+    const valid = isSigned
+      ? validateCaktoSignature((req as Request & { rawBody?: Buffer }).rawBody, timestamp, signature, secret)
+      : (!signature || project.id === "default") && validateCaktoSecret(legacySecret ?? req.body?.secret, secret, signature ? req.body : undefined);
+    if (!valid) {
+      logWebhook(repos, project.id, false, "AUTH_FAILED");
+      res.status(401).json({ error: "Segredo ou assinatura Cakto inválidos." });
+      return;
+    }
+
+    const eventName = req.body?.event ?? req.body?.event_type;
+    if (["test", "ping"].includes(eventName) ||
+        (rawRecords.length > 0 && rawRecords.every((item) => item?.card && item?.pix && item?.boleto && item?.picpay))) {
+      logWebhook(repos, project.id, true, "PROBE");
+      res.json({ success: true, probe: true, project_id: project.id });
+      return;
+    }
+
+    let events: NormalizedCaktoPayload[] = [];
+    try {
+      if (rawRecords.length === 0 || !eventName) throw new Error("Evento ausente.");
+      if (isSigned && rawRecords.some((data) => !data || typeof data !== "object" ||
+          typeof data.product?.id !== "string" ||
+          (eventName !== "checkout_abandonment" && (typeof data.id !== "string" || typeof data.status !== "string")))) {
+        throw new Error("Estrutura da entrega assinada inválida.");
+      }
+      events = rawRecords.map((data) => normalizeCaktoWebhook({ ...req.body, data }));
+      for (const event of events) {
+        if (!(AUTOMATION_EVENTS as readonly string[]).includes(event.eventType)) throw new Error("Evento Cakto não suportado.");
+        if (event.eventType === "purchase_approved" && !["APPROVED", "PAID"].includes(event.status)) {
+          throw new Error("Compra aprovada exige status de pagamento confirmado.");
+        }
+        if (event.eventType === "purchase_refunded" && event.status !== "REFUNDED") {
+          throw new Error("Reembolso exige status de reembolso confirmado.");
+        }
+      }
+    } catch {
+      logWebhook(repos, project.id, true, "INVALID_PAYLOAD", undefined, "Estrutura, evento ou dados de pagamento inválidos.");
+      res.status(400).json({ error: "Payload Cakto inválido ou evento não suportado." });
+      return;
+    }
+
+    const allowed = linkedProducts(repos, project);
+    if ((project.id !== "default" || allowed.length > 0) && events.some((event) => !allowed.includes(event.product.id))) {
+      logWebhook(repos, project.id, true, "PRODUCT_MISMATCH", events.find((event) => !allowed.includes(event.product.id)));
+      res.status(422).json({ error: "Produto sem vínculo com este projeto." });
+      return;
+    }
 
     try {
-      const db = getDatabase();
-      const projectRepo = new ProjectRepository(db);
-      const rawSlug = req.params?.project_slug;
-      const projectSlug = typeof rawSlug === "string" ? rawSlug.trim() : undefined;
-
-      // Resolucao de projeto: 1) por slug na URL, 2) por query param, 3) por product_id no payload, 4) fallback default
-      let targetProject = projectSlug ? projectRepo.findBySlug(projectSlug) : null;
-      if (!targetProject && req.query.project_id) {
-        targetProject = projectRepo.findById(String(req.query.project_id)) ?? projectRepo.findBySlug(String(req.query.project_id));
-      }
-      if (!targetProject && req.query.project) {
-        targetProject = projectRepo.findBySlug(String(req.query.project));
-      }
-      if (!targetProject && req.body) {
-        const prodId = req.body?.data?.product?.id || req.body?.product?.id || req.body?.product_id;
-        if (prodId) {
-          targetProject = projectRepo.findByCaktoProductId(String(prodId));
-        }
-      }
-      if (!targetProject) {
-        targetProject = projectRepo.findById("default") ?? projectRepo.findBySlug("default");
-      }
-      const targetProjectId = targetProject?.id ?? "default";
-
-      // 1. Extração do secret de multiplas origens permitidas
-      const authHeader = req.headers["authorization"];
-      const bearerSecret = typeof authHeader === "string" && authHeader.startsWith("Bearer ")
-        ? authHeader.slice(7).trim()
-        : undefined;
-
-      const providedSecret =
-        (req.headers["x-cakto-signature"] as string | undefined) ||
-        (req.headers["x-cakto-secret"] as string | undefined) ||
-        (req.headers["x-webhook-secret"] as string | undefined) ||
-        bearerSecret ||
-        (req.query.secret as string | undefined) ||
-        (req.query.token as string | undefined) ||
-        (req.body && typeof req.body === "object" ? req.body.secret : undefined) ||
-        (req.body && typeof req.body === "object" && req.body.data && typeof req.body.data === "object"
-          ? req.body.data.secret
-          : undefined);
-
-      const expectedSecret = targetProject?.cakto_webhook_secret || options.secret || env.caktoWebhookSecret;
-      let isValidSecret = validateCaktoSecret(providedSecret, expectedSecret, req.body);
-      if (!isValidSecret && (options.secret || env.caktoWebhookSecret)) {
-        isValidSecret = validateCaktoSecret(providedSecret, options.secret ?? env.caktoWebhookSecret, req.body);
-      }
-
-      if (!isValidSecret) {
-        res.status(401).json({
-          error: "Unauthorized: invalid or missing Cakto webhook secret",
-          project_id: targetProjectId,
-        });
-        return;
-      }
-
-      // 2. Validação do corpo da requisição
-      if (!req.body || typeof req.body !== "object" || Object.keys(req.body).length === 0) {
-        res.status(400).json({
-          error: "Bad Request: missing or empty webhook body",
-        });
-        return;
-      }
-
-      // Suporte especial para pings ou testes da plataforma Cakto
-      const rawEventName = String(req.body?.event || req.body?.event_type || req.body?.data?.event || "").trim().toLowerCase();
-      if (rawEventName === "test" || rawEventName === "ping") {
-        res.status(200).json({
-          success: true,
-          message: "Cakto test webhook received successfully",
-          project_id: targetProjectId,
-          timestamp: new Date().toISOString(),
-        });
-        return;
-      }
-
-      // 3. Normalização do payload Cakto
-      const normalized = normalizeCaktoWebhook(req.body);
-
-      // 4. Persistência idempotente no SQLite com o projeto correto
-      const result = processNormalizedWebhook(normalized, options.repositories, targetProjectId);
-      const processingTimeMs = Date.now() - startTime;
-
-      // 5. Acionamento da Máquina de Estados do Funil (se pedido não for duplicado)
-      if (!result.isDuplicate) {
-        try {
-          const machine = getEffectiveStateMachine();
-
-          if (normalized.eventType === "purchase_approved") {
-            machine.handlePurchaseApproved({
-              transactionId: normalized.transactionId,
-              phone: normalized.customer.phone,
-              name: normalized.customer.name,
-              email: normalized.customer.email,
-              productId: normalized.product.id,
-              offerId: normalized.product.offerId,
-              paidAt: normalized.paidAt,
-              rawPayload: normalized.rawPayload,
-              allowExistingOrder: true,
-              projectId: targetProjectId,
-            });
-          } else if (normalized.eventType === "pix_generated") {
-            machine.handlePixGenerated({
-              transactionId: normalized.transactionId,
-              phone: normalized.customer.phone,
-              name: normalized.customer.name,
-              email: normalized.customer.email,
-              productId: normalized.product.id,
-              offerId: normalized.product.offerId,
-              pixCode: normalized.pix?.qrCodeText || "00020126580014br.gov.bcb.pix0136pix-simulador",
-              rawPayload: normalized.rawPayload,
-              allowExistingOrder: true,
-              projectId: targetProjectId,
-            });
-          } else if (normalized.eventType === "purchase_refunded" || normalized.eventType === "chargeback") {
-            machine.handleRefund({
-              transactionId: normalized.transactionId,
-              customerId: result.customer.id,
-              phone: normalized.customer.phone,
-              rawPayload: normalized.rawPayload,
-              projectId: targetProjectId,
-            });
-          }
-        } catch (machineErr) {
-          console.error("[Webhook] Erro ao disparar maquina de estados:", machineErr);
-        }
-      }
-
-      // 6. Resposta imediata 200 OK (< 100ms)
-      res.status(200).json({
-        success: true,
-        transaction_id: normalized.transactionId,
-        event_type: normalized.eventType,
-        status: normalized.status,
-        project_id: targetProjectId,
-        customer_id: result.customer.id,
-        order_id: result.order.id,
-        duplicate: result.isDuplicate,
-        processing_time_ms: processingTimeMs,
-        processed_at: new Date().toISOString(),
+      const results = repos.db.transaction(() => events.map((event) => {
+        const result = processProjectEvent(repos, project, event, options.repositories);
+        logWebhook(repos, project.id, true, result.isDuplicate ? "DUPLICATE" : "PROCESSED", event);
+        return {
+          success: true, transaction_id: event.transactionId, event_type: event.eventType, status: event.status,
+          project_id: project.id, customer_id: result.customer.id, order_id: result.order.id,
+          duplicate: result.isDuplicate,
+        };
+      })).immediate();
+      res.json({
+        ...results[0], ...(results.length > 1 ? { events: results } : {}),
+        processing_time_ms: Date.now() - started, processed_at: new Date().toISOString(),
       });
-    } catch (error: unknown) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      const statusCode = errorMsg.startsWith("Invalid Cakto payload") || errorMsg.startsWith("Invalid phone")
-        ? 400
-        : 500;
-
-      res.status(statusCode).json({
-        error: errorMsg,
-      });
+    } catch {
+      logWebhook(repos, project.id, true, "PROCESSING_ERROR", events[0]);
+      res.status(500).json({ error: "Não foi possível processar o webhook." });
     }
   };
-
   // Handlers de verificacao de URL da Cakto (GET e HEAD)
   const handleCaktoValidation = (req: Request, res: Response): void => {
     const rawSlug = req.params?.project_slug;
@@ -558,139 +505,105 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
   app.post("/api/webhook/cakto", handleCaktoWebhook);
   app.post("/api/webhook/cakto/:project_slug", handleCaktoWebhook);
 
-  // =========================================================================
-  // Simulador de Eventos Cakto e Funil WhatsApp (POST /api/simulator/cakto)
-  // =========================================================================
-  app.post("/api/simulator/cakto", async (req: Request, res: Response): Promise<void> => {
-    try {
-      const { phone, name, event, eventType, productType, text } = req.body || {};
-
-      if (!phone || typeof phone !== "string" || phone.replace(/\D/g, "").length < 8) {
-        res.status(400).json({
-          error: "ValidationError",
-          message: "Telefone com DDD é obrigatório para a simulação (mínimo 8 dígitos numéricos).",
-        });
-        return;
-      }
-
-      const cleanPhone = sanitizePhone(phone);
-      const cleanName = (name && typeof name === "string" && name.trim()) ? name.trim() : "Cliente Teste";
-      const selectedEvent = String(event || eventType || "purchase_approved").trim().toLowerCase();
-
-      // Caso especial: Simular Resposta do Cliente (Gatilho de micro-comprometimento)
-      if (selectedEvent === "customer_reply" || selectedEvent === "inbound_message" || selectedEvent === "reply") {
-        const replyText = typeof text === "string" && text.trim() ? text.trim() : "SIM";
-        const machine = getEffectiveStateMachine();
-        const replyResult = machine.handleInboundMessage({
-          phoneOrJid: cleanPhone,
-          text: replyText,
-          timestamp: new Date(),
-        });
-
-        res.status(200).json({
-          success: true,
-          mode: "customer_reply",
-          phone: cleanPhone,
-          name: cleanName,
-          text: replyText,
-          state_machine: replyResult,
-          message: replyResult.rescheduledJobsCount > 0
-            ? `Resposta processada! Micro-comprometimento ativado (${replyResult.rescheduledJobsCount} job(s) antecipados para agora).`
-            : `Resposta do cliente registrada com sucesso (cliente estado: '${replyResult.newState || "N/A"}').`,
-        });
-        return;
-      }
-
-      // Determinar produto do catálogo para a simulação
-      const isUpsell = selectedEvent === "purchase_approved_upsell" || productType === "UPSELL_1" || selectedEvent.includes("upsell");
-      const catalogItem = isUpsell ? CATALOG.UPSELL_1 : CATALOG.MAIN;
-      const defaultOffer = catalogItem.offers[catalogItem.defaultOfferId] ?? Object.values(catalogItem.offers)[0];
-
-      // Mapear evento canônico Cakto
-      const caktoEventType = selectedEvent === "pix_generated" ? "pix_generated" : "purchase_approved";
-      const caktoStatus = caktoEventType === "pix_generated" ? "waiting_payment" : "paid";
-      const transactionId = "sim_tx_" + Date.now() + "_" + Math.floor(Math.random() * 10000);
-
-      // Montar payload válido da Cakto
-      const caktoPayload = {
-        event: caktoEventType,
-        data: {
-          id: transactionId,
-          status: caktoStatus,
-          customer: {
-            name: cleanName,
-            phone: cleanPhone,
-            email: req.body.email || `${cleanPhone}@simulador.local`,
-          },
-          product: {
-            id: catalogItem.productId,
-            name: catalogItem.name,
-          },
-          offer: {
-            id: catalogItem.defaultOfferId,
-            name: defaultOffer?.name || catalogItem.name,
-            price_cents: defaultOffer?.priceCents || 9700,
-          },
-          pix: caktoEventType === "pix_generated" ? {
-            qr_code_text: "00020126580014br.gov.bcb.pix0136pix-simulador-chave-teste",
-            qr_code_url: "https://cakto.com/pix/qr.png",
-          } : undefined,
-          paid_at: caktoStatus === "paid" ? new Date().toISOString() : null,
-          created_at: new Date().toISOString(),
-        },
-      };
-
-      // Gerar assinatura HMAC com o secret configurado (env.caktoWebhookSecret)
-      const webhookSecret = options.secret ?? env.caktoWebhookSecret;
-      const hmacSignature = computeCaktoHmac(caktoPayload, webhookSecret);
-
-      // Repassar internamente para a rota / handler do webhook com os headers de assinatura
-      let responseStatusCode = 200;
-      let responseBody: any = null;
-
-      const simReq = {
-        headers: {
-          "x-cakto-signature": hmacSignature,
-          "x-cakto-secret": webhookSecret,
-        },
-        body: caktoPayload,
-        query: {},
-        params: {},
-      } as unknown as Request;
-
-      const simRes = {
-        status: (code: number) => {
-          responseStatusCode = code;
-          return simRes;
-        },
-        json: (data: any) => {
-          responseBody = data;
-          return simRes;
-        },
-      } as unknown as Response;
-
-      await handleCaktoWebhook(simReq, simRes);
-
-      res.status(responseStatusCode).json({
-        success: responseStatusCode >= 200 && responseStatusCode < 300,
-        simulated_event: caktoEventType,
-        product: catalogItem.name,
-        product_id: catalogItem.productId,
-        offer_id: catalogItem.defaultOfferId,
-        transaction_id: transactionId,
-        hmac_signature: hmacSignature,
-        webhook_response: responseBody,
-        message: `Evento '${caktoEventType}' simulado com sucesso para ${cleanName} (${cleanPhone})!`,
-      });
-    } catch (err: unknown) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      res.status(500).json({
-        error: "SimulatorError",
-        message: errorMsg,
-      });
+  app.post("/api/simulator/cakto", (req: Request, res: Response): void => {
+    const { phone, name, email, event, eventType, productType, text, project_id, product_id, offer_id, amount, marketing_consent } = req.body ?? {};
+    if (typeof phone !== "string" || phone.replace(/\D/g, "").length < 8) {
+      res.status(400).json({ error: "ValidationError", message: "Informe um telefone de simulação válido." });
+      return;
     }
-  });
+    const repos = getEventRepos();
+    const project = repos.projects.findById(typeof project_id === "string" ? project_id : "default");
+    if (!project || repos.db.prepare("SELECT 1 FROM project_workspace WHERE project_id = ? AND archived_at IS NOT NULL").get(project.id)) {
+      res.status(404).json({ error: "Projeto não encontrado." });
+      return;
+    }
+    const selected = String(event || eventType || "purchase_approved");
+    const upsell = selected === "purchase_approved_upsell" || productType === "UPSELL_1";
+    const downsell = selected === "purchase_approved_downsell" || productType === "DOWNSELL";
+    const catalog = upsell ? CATALOG.UPSELL_1 : downsell ? CATALOG.DOWNSELL : CATALOG.MAIN;
+    const type = upsell || downsell ? "purchase_approved" : selected === "pix_gerado" ? "pix_generated" : selected;
+    const reply = ["customer_reply", "inbound_message", "reply"].includes(type);
+    if (!reply && !(AUTOMATION_EVENTS as readonly string[]).includes(type)) {
+      res.status(400).json({ error: "Evento não suportado." });
+      return;
+    }
+    const productId = typeof product_id === "string" && product_id ? product_id
+      : project.cakto_product_id ?? (project.id === "default" ? catalog.productId : null);
+    if (!productId && !reply) {
+      res.status(422).json({ error: "Vincule o produto Cakto antes de simular." });
+      return;
+    }
+    if (productId && project.id !== "default" && !linkedProducts(repos, project).includes(productId)) {
+      res.status(422).json({ error: "Produto de simulação sem vínculo com este projeto." });
+      return;
+    }
 
+    const rollback = Symbol("simulation");
+    let result: Record<string, unknown> = {};
+    let approved = false;
+    try {
+      repos.db.transaction(() => {
+        const cleanPhone = sanitizePhone(phone);
+        if (reply) {
+          const state = new FunnelStateMachine(repos).handleInboundMessage({
+            phoneOrJid: cleanPhone, text: typeof text === "string" ? text : "SIM", projectId: project.id,
+          });
+          result = { mode: "customer_reply", state_machine: state, message: "Resposta do cliente simulada." };
+          throw rollback;
+        }
+
+        const id = "sim_tx_" + randomUUID();
+        const simulatedOffer = typeof offer_id === "string" ? offer_id : project.id === "default" ? catalog.defaultOfferId : "";
+        const status = type === "pix_generated" ? "waiting_payment"
+          : type === "purchase_refused" ? "refused"
+          : type === "purchase_refunded" ? "refunded"
+          : type === "pix_expirado" || type === "subscription_canceled" ? "canceled"
+          : type === "purchase_approved" || type === "subscription_renewed" ? "paid" : type;
+        const normalized = normalizeCaktoWebhook({
+          event: type === "checkout_abandonment" ? "checkout_abandonment" : type,
+          data: {
+            id, status, offer_type: upsell ? "upsell" : downsell ? "downsell" : "main",
+            customer: { name: typeof name === "string" && name.trim() ? name.trim() : "Cliente de simulação", phone: cleanPhone, email },
+            product: { id: productId }, offer: { id: simulatedOffer }, amount,
+            pix: type === "pix_generated" ? { qr_code_text: "PIX_DE_SIMULACAO" } : undefined,
+          },
+        });
+        const last = repos.db.prepare("SELECT COALESCE(MAX(rowid), 0) AS id FROM message_queue").get() as { id: number };
+        if (marketing_consent === true) {
+          repos.db.prepare(`
+            INSERT INTO contact_permissions (project_id, phone, marketing, opted_out) VALUES (?, ?, 1, 0)
+            ON CONFLICT(project_id, phone) DO UPDATE SET marketing = 1
+          `).run(project.id, cleanPhone);
+        }
+        const processed = processProjectEvent(repos, { ...project, is_active: 1 }, normalized, undefined, true);
+        const jobs = repos.db.prepare(`
+          SELECT message_type, scheduled_at, content FROM message_queue WHERE project_id = ? AND rowid > ?
+          ORDER BY scheduled_at
+        `).all(project.id, last.id);
+        approved = jobs.length > 0;
+        result = {
+          simulated_event: type, transaction_id: id, product_id: productId, offer_id: simulatedOffer,
+          evaluations: processed.evaluations, state_machine: processed.canonical, jobs,
+        };
+        throw rollback;
+      }).immediate();
+    } catch (error) {
+      if (error !== rollback) {
+        res.status(422).json({ error: "Não foi possível simular. Confira o telefone e as configurações do projeto." });
+        return;
+      }
+    }
+    if (approved) {
+      repos.db.prepare(`
+        INSERT INTO project_workspace (project_id, simulated_at) VALUES (?, datetime('now'))
+        ON CONFLICT(project_id) DO UPDATE SET simulated_at = excluded.simulated_at
+      `).run(project.id);
+    }
+    repos.auditLogs.log("admin", "simulate_cakto", "projects", project.id, {
+      event: type, scheduled: Array.isArray(result.jobs) ? result.jobs.length : 0, approved,
+    });
+    res.json({ success: true, mode: "dry_run", ...result, project_id: project.id, sent: false, approved });
+  });
   // Roteamento SPA e arquivos estáticos (Full-Stack Invariants)
   const serveSpaIndex = (_req: Request, res: Response) => {
     const indexPath = path.resolve(publicDir, "index.html");
@@ -725,7 +638,7 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
     const safePath = path.resolve(publicDir, "." + req.path);
 
     // Bloqueia Path Traversal e arquivos ocultos (.env, .git)
-    if (!safePath.startsWith(publicDir) || /\/\.|\.env|\.git/i.test(req.path)) {
+    if (safePath !== publicDir && !safePath.startsWith(publicDir + path.sep) || /\/\.|\.env|\.git/i.test(req.path)) {
       res.status(403).send("Forbidden");
       return;
     }
@@ -748,6 +661,16 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
     next();
   });
 
+  app.use((error: { status?: number }, _req: Request, res: Response, next: NextFunction) => {
+    if (res.headersSent) {
+      next(error);
+      return;
+    }
+    const status = error.status === 413 ? 413 : error.status === 400 ? 400 : 500;
+    res.status(status).json({ error: status === 413 ? "Arquivo ou corpo acima do limite." :
+      status === 400 ? "Corpo da solicitação inválido." : "Não foi possível processar a solicitação." });
+  });
+
   return app;
 }
 
@@ -761,7 +684,10 @@ export function startWebhookServer(options: WebhookServerOptions = {}): Promise<
       const port = validatePort(portCandidate);
       const host = options.host ?? process.env.HOST ?? env.host;
 
-      const app = createWebhookApp(options);
+      const app = createWebhookApp({
+        ...options,
+        requireAdmin: options.requireAdmin ?? (!env.isTest && !["127.0.0.1", "::1", "localhost"].includes(host)),
+      });
       const server = http.createServer(app);
 
       server.listen(port, host, () => {

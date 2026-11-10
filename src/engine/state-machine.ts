@@ -69,6 +69,7 @@ export interface PurchaseApprovedEvent {
   readonly email?: string | null;
   readonly jid?: string | null;
   readonly productId?: string;
+  readonly productType?: ProductType;
   readonly offerId?: string;
   readonly paidAt?: string | Date | null;
   readonly totalCents?: number;
@@ -92,6 +93,7 @@ export interface RefundEvent {
   readonly rawPayload?: unknown;
   readonly allowExistingOrder?: boolean;
   readonly projectId?: string;
+  readonly recordOrder?: boolean;
 }
 
 export interface StateMachineResult {
@@ -157,7 +159,7 @@ export class FunnelStateMachine {
     for (const key of candidates) {
       try {
         const byId = this.repos.templates.findById(key);
-        if (byId && (!projectId || byId.project_id === projectId || byId.project_id === "default")) {
+        if (byId && (byId.project_id === (projectId ?? "default"))) {
           return byId;
         }
         const byName = this.repos.templates.findByName(key, projectId);
@@ -221,8 +223,9 @@ export class FunnelStateMachine {
 
     return this.repos.transaction(() => {
       // 1. Upsert do cliente
-      let customer = this.repos.customers.findByPhone(canonicalPhone);
-      const targetProjectId = event.projectId || customer?.project_id || "default";
+      const targetProjectId = event.projectId || "default";
+      let customer = this.repos.customers.findByPhone(event.phone, targetProjectId) ??
+        this.repos.customers.findByPhone(canonicalPhone, targetProjectId);
       if (!customer) {
         customer = this.repos.customers.upsert({
           phone: canonicalPhone,
@@ -277,7 +280,7 @@ export class FunnelStateMachine {
       const trigger = this.repos.funnelTriggers?.findByKey(targetProjectId, "ABANDONMENT_RECOVERY");
 
       // Se o gatilho estiver explicitamente desativado pelo usuario, aborta enfileiramento
-      if (trigger && trigger.is_active === 0) {
+      if (targetProjectId !== "default" || trigger?.is_active === 0) {
         this.repos.auditLogs.log(
           "FunnelStateMachine",
           "TRIGGER_DISABLED",
@@ -329,7 +332,7 @@ export class FunnelStateMachine {
       });
 
       const customTemplate =
-        (trigger?.template_id ? this.repos.templates?.findById(trigger.template_id) : null) ??
+        (trigger?.template_id ? this.getTemplate(trigger.template_id, [], targetProjectId) : null) ??
         this.getTemplate("PIX_RECOVERY", [
           "ABANDONMENT_RECOVERY",
           "tpl_pix_recovery",
@@ -431,7 +434,8 @@ export class FunnelStateMachine {
           catalogItem = found;
           productType = found.type;
         }
-      } else if (event.offerId) {
+      }
+      if (productType === "MAIN" && event.offerId) {
         const found = getProductByOfferId(event.offerId);
         if (found) {
           catalogItem = found;
@@ -443,10 +447,15 @@ export class FunnelStateMachine {
         productType = "MAIN";
         catalogItem = CATALOG.MAIN;
       }
+      if (productType === "MAIN" && event.productType && event.projectId && event.projectId !== "default") {
+        productType = event.productType;
+        catalogItem = CATALOG[productType];
+      }
 
       // 2. Upsert do cliente
-      let customer = this.repos.customers.findByPhone(canonicalPhone);
-      const targetProjectId = event.projectId || customer?.project_id || "default";
+      const targetProjectId = event.projectId || "default";
+      let customer = this.repos.customers.findByPhone(event.phone, targetProjectId) ??
+        this.repos.customers.findByPhone(canonicalPhone, targetProjectId);
       if (!customer) {
         customer = this.repos.customers.upsert({
           phone: canonicalPhone,
@@ -519,7 +528,7 @@ export class FunnelStateMachine {
 
         // 3. Agenda DELIVERY_MAIN se o gatilho estiver ativo
         const triggerMain = this.repos.funnelTriggers?.findByKey(targetProjectId, "MAIN_DELIVERY");
-        const mainActive = triggerMain ? triggerMain.is_active === 1 : true;
+        const mainActive = targetProjectId === "default" && (triggerMain?.is_active ?? 1) === 1;
         const mainDelay = triggerMain?.delay_seconds ?? 0;
 
         const selectedOffer =
@@ -541,7 +550,7 @@ export class FunnelStateMachine {
         let messageStep = 0;
 
         const customDelivery =
-          (triggerMain?.template_id ? this.repos.templates?.findById(triggerMain.template_id) : null) ??
+          (triggerMain?.template_id ? this.getTemplate(triggerMain.template_id, [], targetProjectId) : null) ??
           this.getTemplate("MAIN_DELIVERY", [
             "DELIVERY_MAIN",
             "tpl_welcome_delivery",
@@ -662,7 +671,7 @@ export class FunnelStateMachine {
 
         // 4. Agenda PITCH_UPSELL_1 se o gatilho estiver ativo
         const triggerUpsell1 = this.repos.funnelTriggers?.findByKey(targetProjectId, "UPSELL_1_OFFER");
-        const upsell1Active = triggerUpsell1 ? triggerUpsell1.is_active === 1 : true;
+        const upsell1Active = targetProjectId === "default" && (triggerUpsell1?.is_active ?? 1) === 1;
         const upsell1Config = CATALOG.UPSELL_1;
         const nextStepDelay = triggerUpsell1?.delay_seconds !== undefined
           ? triggerUpsell1.delay_seconds
@@ -690,7 +699,7 @@ export class FunnelStateMachine {
           });
 
           const customUpsell1 =
-            (triggerUpsell1?.template_id ? this.repos.templates?.findById(triggerUpsell1.template_id) : null) ??
+            (triggerUpsell1?.template_id ? this.getTemplate(triggerUpsell1.template_id, [], targetProjectId) : null) ??
             this.getTemplate("UPSELL_1_OFFER", [
               "PITCH_UPSELL_1",
               "tpl_upsell_pitch",
@@ -769,7 +778,7 @@ export class FunnelStateMachine {
 
         // 5. Downsell por tempo: agenda PITCH_DOWNSELL_1 se o gatilho estiver ativo
         const triggerDownsell = this.repos.funnelTriggers?.findByKey(targetProjectId, "DOWNSELL_OFFER");
-        const downsellActive = triggerDownsell ? triggerDownsell.is_active === 1 : true;
+        const downsellActive = targetProjectId === "default" && (triggerDownsell?.is_active ?? 1) === 1;
         const downsellDelay = triggerDownsell?.delay_seconds !== undefined
           ? triggerDownsell.delay_seconds
           : (nextStepDelay + (upsell1Config.downsellStep?.delaySeconds ?? 7200)); // 15min + 2h
@@ -797,7 +806,7 @@ export class FunnelStateMachine {
           });
 
           const customDownsell =
-            (triggerDownsell?.template_id ? this.repos.templates?.findById(triggerDownsell.template_id) : null) ??
+            (triggerDownsell?.template_id ? this.getTemplate(triggerDownsell.template_id, [], targetProjectId) : null) ??
             this.getTemplate("DOWNSELL_OFFER", [
               "PITCH_DOWNSELL_1",
               "tpl_downsell_offer",
@@ -893,7 +902,7 @@ export class FunnelStateMachine {
 
         // 3. Entrega de UPSELL_1 se o gatilho estiver ativo
         const triggerUp1Deliv = this.repos.funnelTriggers?.findByKey(targetProjectId, "UPSELL_1_DELIVERY");
-        const up1DelivActive = triggerUp1Deliv ? triggerUp1Deliv.is_active === 1 : true;
+        const up1DelivActive = targetProjectId === "default" && (triggerUp1Deliv?.is_active ?? 1) === 1;
         const up1DelivDelay = triggerUp1Deliv?.delay_seconds ?? 0;
 
         const templateVars = this.buildTemplateVariables({
@@ -907,7 +916,7 @@ export class FunnelStateMachine {
         if (up1DelivActive) {
           const deliveryBaseTime = new Date(now.getTime() + up1DelivDelay * 1000);
           const customUpsell1Deliv =
-            (triggerUp1Deliv?.template_id ? this.repos.templates?.findById(triggerUp1Deliv.template_id) : null) ??
+            (triggerUp1Deliv?.template_id ? this.getTemplate(triggerUp1Deliv.template_id, [], targetProjectId) : null) ??
             this.getTemplate("UPSELL_1_DELIVERY", [
               "DELIVERY_UPSELL_1",
               "tpl_upsell_1_delivery",
@@ -969,7 +978,7 @@ export class FunnelStateMachine {
 
         // 4. Agenda UPSELL_2 se o gatilho estiver ativo
         const triggerUp2Offer = this.repos.funnelTriggers?.findByKey(targetProjectId, "UPSELL_2_OFFER");
-        const up2OfferActive = triggerUp2Offer ? triggerUp2Offer.is_active === 1 : true;
+        const up2OfferActive = targetProjectId === "default" && (triggerUp2Offer?.is_active ?? 1) === 1;
         const upsell2Config = CATALOG.UPSELL_2;
         const nextStepDelay = triggerUp2Offer?.delay_seconds !== undefined
           ? triggerUp2Offer.delay_seconds
@@ -999,7 +1008,7 @@ export class FunnelStateMachine {
           });
 
           const customUpsell2 =
-            (triggerUp2Offer?.template_id ? this.repos.templates?.findById(triggerUp2Offer.template_id) : null) ??
+            (triggerUp2Offer?.template_id ? this.getTemplate(triggerUp2Offer.template_id, [], targetProjectId) : null) ??
             this.getTemplate("UPSELL_2_OFFER", [
               "PITCH_UPSELL_2",
               "tpl_upsell_2_pitch",
@@ -1091,7 +1100,7 @@ export class FunnelStateMachine {
 
         // 3. Entrega de UPSELL_2 se o gatilho estiver ativo
         const triggerUp2Deliv = this.repos.funnelTriggers?.findByKey(targetProjectId, "UPSELL_2_DELIVERY");
-        const up2DelivActive = triggerUp2Deliv ? triggerUp2Deliv.is_active === 1 : true;
+        const up2DelivActive = targetProjectId === "default" && (triggerUp2Deliv?.is_active ?? 1) === 1;
         const up2DelivDelay = triggerUp2Deliv?.delay_seconds ?? 0;
 
         const templateVars = this.buildTemplateVariables({
@@ -1105,7 +1114,7 @@ export class FunnelStateMachine {
         if (up2DelivActive) {
           const deliveryBaseTime = new Date(now.getTime() + up2DelivDelay * 1000);
           const customUpsell2Deliv =
-            (triggerUp2Deliv?.template_id ? this.repos.templates?.findById(triggerUp2Deliv.template_id) : null) ??
+            (triggerUp2Deliv?.template_id ? this.getTemplate(triggerUp2Deliv.template_id, [], targetProjectId) : null) ??
             this.getTemplate("UPSELL_2_DELIVERY", [
               "DELIVERY_UPSELL_2",
               "tpl_upsell_2_delivery",
@@ -1182,7 +1191,7 @@ export class FunnelStateMachine {
 
         // 3. Entrega de DOWNSELL se o gatilho estiver ativo
         const triggerDownDeliv = this.repos.funnelTriggers?.findByKey(targetProjectId, "DOWNSELL_DELIVERY");
-        const downDelivActive = triggerDownDeliv ? triggerDownDeliv.is_active === 1 : true;
+        const downDelivActive = targetProjectId === "default" && (triggerDownDeliv?.is_active ?? 1) === 1;
         const downDelivDelay = triggerDownDeliv?.delay_seconds ?? 0;
 
         const templateVars = this.buildTemplateVariables({
@@ -1196,7 +1205,7 @@ export class FunnelStateMachine {
         if (downDelivActive) {
           const deliveryBaseTime = new Date(now.getTime() + downDelivDelay * 1000);
           const customDownsellDeliv =
-            (triggerDownDeliv?.template_id ? this.repos.templates?.findById(triggerDownDeliv.template_id) : null) ??
+            (triggerDownDeliv?.template_id ? this.getTemplate(triggerDownDeliv.template_id, [], targetProjectId) : null) ??
             this.getTemplate("DOWNSELL_DELIVERY", [
               "DELIVERY_DOWNSELL",
               "tpl_downsell_delivery",
@@ -1297,19 +1306,8 @@ export class FunnelStateMachine {
   public handleInboundMessage(event: InboundMessageEvent): StateMachineResult {
     const rawIdentifier = event.phoneOrJid.trim();
 
-    // 1. Localiza cliente por JID ou Telefone
-    let customer: Customer | null = null;
-    if (rawIdentifier.includes("@")) {
-      customer = this.repos.customers.findByJid(rawIdentifier);
-    }
-
-    if (!customer) {
-      const { candidates } = resolveBrazilianPhoneCandidates(rawIdentifier);
-      for (const cand of candidates) {
-        customer = this.repos.customers.findByPhone(cand);
-        if (customer) break;
-      }
-    }
+    const { candidates } = resolveBrazilianPhoneCandidates(rawIdentifier);
+    const customer = this.repos.customers.findInboundCustomer(rawIdentifier, candidates, event.projectId);
 
     if (!customer) {
       return {
@@ -1566,21 +1564,21 @@ export class FunnelStateMachine {
         customer = this.repos.customers.findById(event.customerId);
       } else if (event.phone) {
         const { canonicalPhone } = resolveBrazilianPhoneCandidates(event.phone);
-        customer = this.repos.customers.findByPhone(canonicalPhone);
+        customer = this.repos.customers.findByPhone(canonicalPhone, event.projectId);
       }
 
       if (!customer) {
         // Tenta encontrar pelo transactionId nas ordens
         const existingOrder = this.repos.orders.findByTransactionAndEvent(
           event.transactionId,
-          "purchase_approved"
+          "purchase_approved", event.projectId
         );
         if (existingOrder) {
           customer = this.repos.customers.findById(existingOrder.customer_id);
         }
       }
 
-      if (!customer) {
+      if (!customer || (event.projectId && customer.project_id !== event.projectId)) {
         return {
           success: false,
           customerId: "",
@@ -1604,13 +1602,14 @@ export class FunnelStateMachine {
           ? (event.rawPayload as Record<string, unknown>)
           : { reason: event.reason ?? "refund" };
 
-      this.repos.orders.createOrIgnore({
+      if (event.recordOrder !== false) this.repos.orders.createOrIgnore({
         transaction_id: event.transactionId.trim(),
         customer_id: customer.id,
         product_id: CATALOG.MAIN.productId,
         offer_id: CATALOG.MAIN.defaultOfferId,
         event_type: "purchase_refunded",
         status: "refunded",
+        project_id: customer.project_id,
         raw_payload: rawPayload,
       });
 

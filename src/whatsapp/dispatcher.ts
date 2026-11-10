@@ -29,6 +29,8 @@ export interface JidResolutionResult {
  * Parametros de configuracao do despacho com simulacao humana
  */
 export interface DispatchOptions {
+  readonly beforeSend?: () => void;
+  readonly messageId?: string;
   readonly skipPresenceSimulation?: boolean;
   readonly minComposingMs?: number;
   readonly maxComposingMs?: number;
@@ -113,6 +115,7 @@ export function resolveBrazilianPhoneCandidates(rawPhone: string): {
 }
 
 export interface ResolveJidOptions {
+  readonly projectId?: string;
   readonly forceRefresh?: boolean;
   readonly updateDatabase?: boolean;
   readonly customerRepo?: CustomerRepository;
@@ -147,7 +150,9 @@ export async function resolveJid(
       };
     }
     targetPhone = trimmed;
-    existingCustomer = custRepo.findByPhone(targetPhone) || custRepo.findById(targetPhone);
+    const byId = custRepo.findById(targetPhone);
+    existingCustomer = custRepo.findByPhone(targetPhone, options.projectId) ||
+      (byId?.project_id === (options.projectId ?? "default") ? byId : null);
   } else {
     existingCustomer = phoneOrCustomer;
     targetPhone = existingCustomer.phone;
@@ -181,14 +186,14 @@ export async function resolveJid(
         if (options.updateDatabase !== false) {
           if (!existingCustomer) {
             for (const cand of candidates) {
-              const found = custRepo.findByPhone(cand);
+              const found = custRepo.findByPhone(cand, options.projectId);
               if (found) {
                 existingCustomer = found;
                 break;
               }
             }
             if (!existingCustomer) {
-              existingCustomer = custRepo.findByPhone(targetPhone) || custRepo.findByPhone(canonicalPhone);
+              existingCustomer = custRepo.findByPhone(targetPhone, options.projectId) || custRepo.findByPhone(canonicalPhone, options.projectId);
             }
           }
 
@@ -356,9 +361,10 @@ export async function sendTextMessage(
   try {
     await simulateTypingPresence(sock, targetJid, options);
 
+    options?.beforeSend?.();
     const sent = await sock.sendMessage(targetJid, {
       text,
-    });
+    }, options?.messageId ? { messageId: options.messageId } : undefined);
 
     const durationMs = Date.now() - startTime;
     return {
@@ -419,11 +425,12 @@ export async function sendAudioPtt(
     await simulateRecordingPresence(sock, targetJid, options);
 
     // Envio com codec Opus e parametro ptt: true obrigatorio
+    options?.beforeSend?.();
     const sent = await sock.sendMessage(targetJid, {
       audio: audioBuffer,
       mimetype: "audio/ogg; codecs=opus",
       ptt: true,
-    });
+    }, options?.messageId ? { messageId: options.messageId } : undefined);
 
     const durationMs = Date.now() - startTime;
     return {
@@ -481,12 +488,13 @@ export async function sendDocumentMessage(
 
     await simulateTypingPresence(sock, targetJid, options);
 
+    options?.beforeSend?.();
     const sent = await sock.sendMessage(targetJid, {
       document: documentBuffer,
       mimetype,
       fileName,
       caption,
-    });
+    }, options?.messageId ? { messageId: options.messageId } : undefined);
 
     const durationMs = Date.now() - startTime;
     return {

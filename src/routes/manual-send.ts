@@ -1,9 +1,13 @@
 import { Router, Request, Response } from "express";
+import fs from "node:fs";
+import path from "node:path";
 import type { WASocket } from "@whiskeysockets/baileys";
 import { sanitizePhone, type ProcessWebhookRepositories } from "../webhooks/adapters.js";
 import { getDatabase } from "../database/connection.js";
 import { CustomerRepository, AuditLogRepository } from "../database/repositories.js";
 import { getWhatsAppSocket, getWhatsAppConnectionStatus } from "../whatsapp/socket.js";
+import { env } from "../config/env.js";
+import { projectMediaPath } from "../engine/project-automations.js";
 import {
   resolveJid,
   sendTextMessage,
@@ -35,6 +39,7 @@ export async function handleManualSend(
       mimetype,
       caption,
       skipSimulation = false,
+      project_id = "default",
     } = req.body || {};
 
     // 1. Validacao rigorosa do telefone
@@ -87,6 +92,37 @@ export async function handleManualSend(
       return;
     }
 
+    const db = options.repositories?.customerRepo?.database ?? getDatabase();
+    if (typeof project_id !== "string" || !db.prepare(`
+      SELECT 1 FROM projects p LEFT JOIN project_workspace w ON w.project_id = p.id
+      WHERE p.id = ? AND w.archived_at IS NULL
+    `).get(project_id)) {
+      res.status(404).json({ error: "Projeto não encontrado." });
+      return;
+    }
+    if (db.prepare("SELECT 1 FROM whatsapp_opt_out WHERE phone = ?").get(sanitizedPhone) ||
+        db.prepare("SELECT 1 FROM contact_permissions WHERE project_id = ? AND phone = ? AND opted_out = 1").get(project_id, sanitizedPhone)) {
+      res.status(403).json({ error: "O destinatário solicitou descadastro." });
+      return;
+    }
+    let allowedMedia: string | null = null;
+    if (type !== "text") {
+      const media = mediaPath.trim();
+      allowedMedia = projectMediaPath(path.basename(media), type === "audio_ptt" ? "AUDIO_PTT" : "DOCUMENT", project_id);
+      if (allowedMedia && path.basename(media) !== media) {
+        try {
+          const provided = fs.realpathSync(path.isAbsolute(media) ? media : path.resolve(env.paths.mediaDir, media));
+          if (provided !== allowedMedia) allowedMedia = null;
+        } catch {
+          allowedMedia = null;
+        }
+      }
+      if (!allowedMedia) {
+        res.status(400).json({ error: "Arquivo de mídia inválido ou fora deste projeto." });
+        return;
+      }
+    }
+
     // 3. Obtencao do socket Baileys ativo
     const sock = options.sock
       ? typeof options.sock === "function"
@@ -104,11 +140,11 @@ export async function handleManualSend(
     }
 
     // 4. Resolucao do JID com 9º digito
-    const db = getDatabase();
     const customerRepo =
       options.repositories?.customerRepo ??
       (db && db.open ? new CustomerRepository(db) : undefined);
-    const resolved = await resolveJid(sanitizedPhone, sock, { customerRepo });
+    const scopedCustomer = customerRepo?.findByPhone(sanitizedPhone, project_id);
+    const resolved = await resolveJid(scopedCustomer ?? sanitizedPhone, sock, { customerRepo, projectId: project_id });
 
     // 5. Envio de acordo com o tipo
     let dispatchResult;
@@ -117,12 +153,12 @@ export async function handleManualSend(
     if (type === "text") {
       dispatchResult = await sendTextMessage(sock, resolved.jid, messageContent, dispatchOptions);
     } else if (type === "audio_ptt") {
-      dispatchResult = await sendAudioPtt(sock, resolved.jid, mediaPath.trim(), dispatchOptions);
+      dispatchResult = await sendAudioPtt(sock, resolved.jid, allowedMedia!, dispatchOptions);
     } else {
       dispatchResult = await sendDocumentMessage(
         sock,
         resolved.jid,
-        mediaPath.trim(),
+        allowedMedia!,
         fileName || "documento.pdf",
         mimetype || "application/pdf",
         caption,
@@ -137,6 +173,7 @@ export async function handleManualSend(
         (db && db.open ? new AuditLogRepository(db) : undefined);
       if (auditRepo) {
         auditRepo.log("api", "manual_send", "whatsapp_message", resolved.jid, {
+          projectId: project_id,
           phone: sanitizedPhone,
           type,
           success: dispatchResult.success,

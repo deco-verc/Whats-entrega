@@ -23,14 +23,15 @@ CREATE INDEX IF NOT EXISTS idx_projects_cakto_product_id ON projects (cakto_prod
 CREATE TABLE IF NOT EXISTS customers (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL DEFAULT 'default',
-  phone TEXT NOT NULL UNIQUE,
+  phone TEXT NOT NULL,
   jid TEXT,
   name TEXT NOT NULL,
   email TEXT,
   current_state TEXT NOT NULL DEFAULT 'NEW',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE
+  FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE,
+  UNIQUE (project_id, phone)
 );
 
 CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers (phone);
@@ -38,7 +39,7 @@ CREATE INDEX IF NOT EXISTS idx_customers_jid ON customers (jid);
 CREATE INDEX IF NOT EXISTS idx_customers_current_state ON customers (current_state);
 CREATE INDEX IF NOT EXISTS idx_customers_project_id ON customers (project_id);
 
--- 2. Tabela de Pedidos e Transacoes Cakto (Idempotencia estrita via UNIQUE(transaction_id, event_type))
+-- 2. Tabela de Pedidos e Transacoes Cakto
 CREATE TABLE IF NOT EXISTS orders (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL DEFAULT 'default',
@@ -51,7 +52,7 @@ CREATE TABLE IF NOT EXISTS orders (
   paid_at TEXT,
   raw_payload TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  CONSTRAINT uq_orders_transaction_event UNIQUE (transaction_id, event_type),
+  CONSTRAINT uq_orders_transaction_event UNIQUE (project_id, transaction_id, event_type),
   FOREIGN KEY (customer_id) REFERENCES customers (id) ON DELETE CASCADE,
   FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE
 );

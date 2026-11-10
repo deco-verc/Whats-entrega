@@ -1,9 +1,6 @@
 import { Router, Request, Response } from "express";
 import { getDatabase } from "../database/connection.js";
-import {
-  FunnelTriggerRepository,
-  type FunnelTrigger,
-} from "../database/repositories.js";
+import { FunnelTriggerRepository } from "../database/repositories.js";
 
 export interface TriggersRouterOptions {
   triggerRepo?: FunnelTriggerRepository;
@@ -20,7 +17,11 @@ export function createTriggersRouter(options: TriggersRouterOptions = {}): Route
   router.get("/", (req: Request, res: Response): void => {
     try {
       const repo = getRepo();
-      const projectId = (req.query.project_id as string)?.trim() || "default";
+      const projectId = typeof req.query.project_id === "string" ? req.query.project_id.trim() || "default" : "default";
+      if (projectId === "all") {
+        res.status(400).json({ error: "Selecione um projeto." });
+        return;
+      }
 
       let triggers = repo.listByProject(projectId);
       if (triggers.length === 0 && projectId !== "all") {
@@ -46,7 +47,7 @@ export function createTriggersRouter(options: TriggersRouterOptions = {}): Route
       const repo = getRepo();
       const id = String(req.params.id);
       const trigger = repo.findById(id);
-      if (!trigger) {
+      if (trigger?.project_id !== (req.query.project_id ?? "default")) {
         res.status(404).json({ error: "Gatilho nao encontrado" });
         return;
       }
@@ -69,6 +70,10 @@ export function createTriggersRouter(options: TriggersRouterOptions = {}): Route
       }
       if (!name || typeof name !== "string" || !name.trim()) {
         res.status(400).json({ error: "Campo 'name' e obrigatorio" });
+        return;
+      }
+      if (template_id && !repo.templateBelongsToProject(String(template_id), project_id || "default")) {
+        res.status(400).json({ error: "Template fora do projeto." });
         return;
       }
 
@@ -96,6 +101,15 @@ export function createTriggersRouter(options: TriggersRouterOptions = {}): Route
       const repo = getRepo();
       const id = String(req.params.id);
       const { name, event_type, is_active, delay_seconds, template_id, media_path } = req.body ?? {};
+      const projectId = typeof req.query.project_id === "string" ? req.query.project_id : "default";
+      if (repo.findById(id)?.project_id !== projectId) {
+        res.status(404).json({ error: "Gatilho nao encontrado" });
+        return;
+      }
+      if (template_id && !repo.templateBelongsToProject(String(template_id), projectId)) {
+        res.status(400).json({ error: "Template fora do projeto." });
+        return;
+      }
 
       const updated = repo.update(id, {
         name: typeof name === "string" ? name : undefined,
@@ -123,6 +137,10 @@ export function createTriggersRouter(options: TriggersRouterOptions = {}): Route
     try {
       const repo = getRepo();
       const id = String(req.params.id);
+      if (repo.findById(id)?.project_id !== (req.query.project_id ?? "default")) {
+        res.status(404).json({ error: "Gatilho nao encontrado" });
+        return;
+      }
       const result = repo.toggle(id);
       if (!result) {
         res.status(404).json({ error: "Gatilho nao encontrado" });

@@ -1,7 +1,7 @@
 import * as path from "node:path";
-import * as fs from "node:fs";
+import { createHash } from "node:crypto";
 import type { WASocket } from "@whiskeysockets/baileys";
-import { env } from "../config/env.js";
+import { checkQueuedAutomation, projectMediaPath } from "./project-automations.js";
 import {
   Repositories,
   repositories as defaultRepositories,
@@ -181,6 +181,7 @@ export class QueueWorker {
 
     this.isProcessing = true;
     const startTime = Date.now();
+    let claimedJobId: string | undefined;
 
     try {
       // 1. Busca exatamente 1 job vencido com status PENDING
@@ -198,6 +199,35 @@ export class QueueWorker {
       if (!marked) {
         return null;
       }
+      claimedJobId = job.id;
+      const customer = this.repos.customers.findById(job.customer_id);
+      const eligibility = () => {
+        const recipient = this.repos.customers.findById(job.customer_id);
+        if (!recipient || recipient.project_id !== job.project_id) return "Vínculo do destinatário inválido.";
+        if (!this.repos.projects.findById(job.project_id)?.is_active) return "Projeto pausado.";
+        const stopped = this.repos.db.prepare("SELECT 1 FROM whatsapp_opt_out WHERE phone = ?").get(job.phone);
+        const optOut = this.repos.db.prepare("SELECT 1 FROM contact_permissions WHERE project_id = ? AND phone = ? AND opted_out = 1").get(job.project_id, job.phone);
+        return stopped || optOut ? "O destinatário solicitou descadastro." : checkQueuedAutomation(this.repos, job, recipient);
+      };
+      const cancel = (reason: string) => this.repos.db.prepare(`
+        UPDATE message_queue SET status = 'CANCELLED', last_error = ?, updated_at = datetime('now')
+        WHERE id = ? AND status = 'PROCESSING'
+      `).run(reason, job.id);
+      let cancellation = eligibility();
+      if (cancellation) {
+        cancel(cancellation);
+        return null;
+      }
+      const dispatchOptions: DispatchOptions = {
+        ...this.dispatchOptions,
+        messageId: "3EB0" + createHash("sha256").update(job.id).digest("hex").slice(0, 18).toUpperCase(),
+        beforeSend: () => {
+          this.dispatchOptions?.beforeSend?.();
+          cancellation = eligibility();
+          if (cancellation) throw new Error(cancellation);
+          this.repos.db.prepare("INSERT INTO queue_dispatch_attempts (job_id) VALUES (?)").run(job.id);
+        },
+      };
 
       // 3. Resolve socket Baileys ativo
       const sock = this.resolveSocket();
@@ -214,7 +244,6 @@ export class QueueWorker {
       }
 
       // 4. Localiza cliente para interpolacao de variaveis Spintax
-      const customer = this.repos.customers.findById(job.customer_id);
       const firstName = customer?.name ? customer.name.trim().split(/\s+/)[0] : "Cliente";
 
       const spintaxVariables: Record<string, string> = {
@@ -231,9 +260,10 @@ export class QueueWorker {
       let targetJid = job.jid;
       if (!targetJid || !targetJid.includes("@")) {
         try {
-          const resolved = await resolveJid(job.phone, sock, {
+          const resolved = await resolveJid(customer ?? job.phone, sock, {
             updateDatabase: true,
             customerRepo: this.repos.customers,
+            projectId: job.project_id,
             auditRepo: this.repos.auditLogs,
           });
           targetJid = resolved.jid;
@@ -256,14 +286,8 @@ export class QueueWorker {
         job.message_type.startsWith("DELIVERY_") && job.media_path?.endsWith(".pdf");
 
       if (isAudio && job.media_path) {
-        let resolvedAudio = path.isAbsolute(job.media_path)
-          ? job.media_path
-          : path.resolve(env.paths.mediaDir, job.media_path);
-        if (!fs.existsSync(resolvedAudio)) {
-          resolvedAudio = path.resolve(process.cwd(), job.media_path);
-        }
-
-        if (!fs.existsSync(resolvedAudio)) {
+        const resolvedAudio = projectMediaPath(path.basename(job.media_path), "AUDIO_PTT", job.project_id);
+        if (!resolvedAudio) {
           this.repos.auditLogs.log(
             "QueueWorker",
             "MEDIA_FALLBACK_TEXT",
@@ -272,25 +296,18 @@ export class QueueWorker {
             {
               level: "WARN",
               reason: "Audio file not found on disk, falling back to text message",
-              media_path: job.media_path,
-              fallback_content: resolvedContent,
+              media_file: path.basename(job.media_path),
             }
           );
-          dispatchResult = await sendTextMessage(sock, targetJid, resolvedContent, this.dispatchOptions);
+          dispatchResult = await sendTextMessage(sock, targetJid, resolvedContent, dispatchOptions);
         } else {
-          dispatchResult = await sendAudioPtt(sock, targetJid, job.media_path, this.dispatchOptions);
+          dispatchResult = await sendAudioPtt(sock, targetJid, resolvedAudio, dispatchOptions);
         }
       } else if (isDocument && job.media_path) {
         const fileName = path.basename(job.media_path);
         const caption = job.content !== job.media_path ? resolvedContent : undefined;
-        let resolvedDoc = path.isAbsolute(job.media_path)
-          ? job.media_path
-          : path.resolve(env.paths.mediaDir, job.media_path);
-        if (!fs.existsSync(resolvedDoc)) {
-          resolvedDoc = path.resolve(process.cwd(), job.media_path);
-        }
-
-        if (!fs.existsSync(resolvedDoc)) {
+        const resolvedDoc = projectMediaPath(fileName, "DOCUMENT", job.project_id);
+        if (!resolvedDoc) {
           this.repos.auditLogs.log(
             "QueueWorker",
             "MEDIA_FALLBACK_TEXT",
@@ -299,40 +316,43 @@ export class QueueWorker {
             {
               level: "WARN",
               reason: "Document file not found on disk, falling back to text message",
-              media_path: job.media_path,
-              fallback_content: caption || resolvedContent,
+              media_file: fileName,
             }
           );
-          const fallbackText = caption || resolvedContent || `Acesse seu material: ${job.media_path}`;
-          dispatchResult = await sendTextMessage(sock, targetJid, fallbackText, this.dispatchOptions);
+          const fallbackText = caption || resolvedContent || "O arquivo do seu material está indisponível.";
+          dispatchResult = await sendTextMessage(sock, targetJid, fallbackText, dispatchOptions);
         } else {
           dispatchResult = await sendDocumentMessage(
             sock,
             targetJid,
-            job.media_path,
+            resolvedDoc,
             fileName,
             "application/pdf",
             caption,
-            this.dispatchOptions
+            dispatchOptions
           );
         }
       } else {
-        dispatchResult = await sendTextMessage(sock, targetJid, resolvedContent, this.dispatchOptions);
+        dispatchResult = await sendTextMessage(sock, targetJid, resolvedContent, dispatchOptions);
       }
 
       // 8. Atualiza resultado no banco de dados
-      if (dispatchResult.success) {
-        this.repos.messageQueue.markAsSent(job.id);
-        this.stats.sentCount++;
-      } else {
-        this.repos.messageQueue.markAsFailed(
-          job.id,
-          dispatchResult.error ?? "Erro no despacho WhatsApp",
-          this.maxAttempts,
-          this.retryDelaySeconds
-        );
-        this.stats.failedCount++;
+      if (cancellation) {
+        cancel(cancellation);
+        return null;
       }
+      this.repos.transaction(() => {
+        if (dispatchResult.success) {
+          this.repos.messageQueue.markAsSent(job.id);
+        } else {
+          this.repos.messageQueue.markAsFailed(
+            job.id, dispatchResult.error ?? "Erro no despacho WhatsApp", this.maxAttempts, this.retryDelaySeconds
+          );
+        }
+        this.repos.db.prepare("DELETE FROM queue_dispatch_attempts WHERE job_id = ?").run(job.id);
+      });
+      if (dispatchResult.success) this.stats.sentCount++;
+      else this.stats.failedCount++;
 
       this.stats.processedCount++;
 
@@ -352,7 +372,12 @@ export class QueueWorker {
         jitterMs,
       };
     } catch (error: unknown) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      if (claimedJobId) {
+        this.repos.db.prepare(`
+          UPDATE message_queue SET status = 'FAILED', last_error = 'ENVIO_INDETERMINADO', updated_at = datetime('now')
+          WHERE id = ? AND status = 'PROCESSING'
+        `).run(claimedJobId);
+      }
       this.stats.failedCount++;
       return null;
     } finally {
