@@ -158,6 +158,9 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<AppInst
 // ============================================================================
 
 export function isDirectExecution(argv1?: string, moduleUrl?: string): boolean {
+  if (process.env.pm_id !== undefined) {
+    return true;
+  }
   if (!argv1) return false;
   try {
     if (moduleUrl) {
@@ -175,7 +178,8 @@ export function isDirectExecution(argv1?: string, moduleUrl?: string): boolean {
     normalized.endsWith("/src/index.ts") ||
     normalized.endsWith("/src/index.js") ||
     normalized.endsWith("/dist/src/index.js") ||
-    normalized.endsWith("/dist/index.js")
+    normalized.endsWith("/dist/index.js") ||
+    normalized.includes("ProcessContainer")
   );
 }
 
