@@ -53,10 +53,17 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
   app.use(express.json({ limit: "2mb" }));
   app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 
-  // Headers de seguranca (AppSec Invariants)
-  app.use((_req: Request, res: Response, next: NextFunction) => {
+  // Headers de seguranca (AppSec Invariants) e CORS para integracao com Cakto e navegadores
+  app.use((req: Request, res: Response, next: NextFunction) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Cakto-Signature, X-Cakto-Secret, X-Webhook-Secret");
+    if (req.method === "OPTIONS") {
+      res.status(204).end();
+      return;
+    }
     next();
   });
 

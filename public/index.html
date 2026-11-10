@@ -614,12 +614,22 @@
       </svg>
       Gatilhos & Automação
     </button>
+    <button class="tab-btn" role="tab" data-tab="testes" aria-selected="false">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M10 2v7.31"></path>
+        <path d="M14 9.3V2"></path>
+        <path d="M8.5 2h7"></path>
+        <path d="M14 9.3a6.5 6.5 0 1 1-4 0"></path>
+        <path d="M5.52 16h12.96"></path>
+      </svg>
+      Área de Testes
+    </button>
     <button class="tab-btn" role="tab" data-tab="configuracoes" aria-selected="false">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="3"></circle>
         <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
       </svg>
-      Configurações & Testes
+      Configurações
     </button>
   </nav>
 
@@ -678,101 +688,60 @@
         </div>
       </div>
 
-      <!-- Card: Testar Funil no Meu WhatsApp -->
-      <div class="card" id="card-simulador-whatsapp" style="margin-bottom: 24px; border: 1px solid var(--border-strong);">
+      <!-- Central de Operação & Webhook Cakto (Produção) -->
+      <div class="card" id="card-producao-webhook" style="margin-bottom: 24px; border: 1px solid var(--border-subtle); background: var(--bg-surface);">
         <div class="card-header" style="background: var(--bg-elevated); display: flex; justify-content: space-between; align-items: center;">
           <div class="card-title">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--accent-primary);">
-              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--status-success);">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
             </svg>
-            Testar Funil no Meu WhatsApp
+            Operação de Produção & Conectividade Cakto
           </div>
-          <span class="badge badge-info" id="sim-badge">Simulador de Eventos Cakto</span>
+          <span class="badge badge-success" id="prod-status-badge">Produção Ativa</span>
         </div>
         <div class="card-body">
-          <div id="sim-alert" class="alert-box"></div>
-
-          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 18px;">
-            <div class="form-group" style="margin-bottom: 0;">
-              <label class="form-label" for="sim-phone">Telefone (com DDD)</label>
-              <input id="sim-phone" class="form-control tabular-nums" type="text" placeholder="Ex: (11) 99887-7665 ou 5511998877665">
-              <span style="font-size: 11px; color: var(--text-muted); margin-top: 4px; display: block;">Informe seu número com DDD para receber as mensagens reais do funil no WhatsApp.</span>
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px;">
+            <div style="background: var(--bg-primary); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 14px;">
+              <span class="form-label" style="margin-bottom: 6px;">URL Oficial do Webhook (Cakto)</span>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <input id="prod-webhook-url-input" class="form-control tabular-nums" type="text" readonly style="background: var(--bg-surface); font-size: 13px;" value="">
+                <button type="button" class="btn btn-primary" id="btn-copy-prod-webhook" title="Copiar URL para a Cakto" style="flex-shrink: 0;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                  </svg>
+                  <span id="copy-wh-text">Copiar URL</span>
+                </button>
+              </div>
+              <span style="font-size: 11px; color: var(--text-muted); margin-top: 6px; display: block;">Copie e cole este endereço no painel da Cakto em "Adicionar Webhook".</span>
             </div>
 
-            <div class="form-group" style="margin-bottom: 0;">
-              <label class="form-label" for="sim-name">Nome do Cliente</label>
-              <input id="sim-name" class="form-control" type="text" placeholder="Ex: Rodrigo Silva" value="Rodrigo Teste">
-              <span style="font-size: 11px; color: var(--text-muted); margin-top: 4px; display: block;">Nome para interpolação das variáveis {first_name} nos áudios e textos.</span>
-            </div>
-          </div>
-
-          <div>
-            <span class="form-label" style="margin-bottom: 8px;">Ações Rápidas de Simulação:</span>
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px;">
-              <button type="button" class="btn" id="btn-sim-pix" data-action="sim-cakto" data-event="pix_generated" style="justify-content: center; background: rgba(245, 158, 11, 0.12); border-color: rgba(245, 158, 11, 0.35); color: var(--status-warning);">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="2" y="5" width="20" height="14" rx="2"></rect>
-                  <line x1="2" y1="10" x2="22" y2="10"></line>
-                </svg>
-                <span>Simular PIX Gerado</span>
-              </button>
-
-              <button type="button" class="btn btn-primary" id="btn-sim-main" data-action="sim-cakto" data-event="purchase_approved" data-product="MAIN" style="justify-content: center;">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
-                  <polyline points="22 4 12 14.01 9 11.01"></polyline>
-                </svg>
-                <span>Simular Compra Aprovada (Principal)</span>
-              </button>
-
-              <button type="button" class="btn" id="btn-sim-upsell" data-action="sim-cakto" data-event="purchase_approved" data-product="UPSELL_1" style="justify-content: center; background: rgba(99, 102, 241, 0.18); border-color: var(--accent-primary); color: #fff;">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <line x1="12" y1="19" x2="12" y2="5"></line>
-                  <polyline points="5 12 12 5 19 12"></polyline>
-                </svg>
-                <span>Simular Compra Upsell 1</span>
-              </button>
-
-              <button type="button" class="btn" id="btn-sim-downsell" data-action="sim-cakto" data-event="purchase_approved" data-product="DOWNSELL" style="justify-content: center; background: rgba(14, 165, 233, 0.15); border-color: rgba(14, 165, 233, 0.4); color: var(--status-info);">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="7 13 12 18 17 13"></polyline>
-                  <polyline points="7 6 12 11 17 6"></polyline>
-                </svg>
-                <span>Simular Compra Downsell</span>
-              </button>
-
-              <button type="button" class="btn" id="btn-sim-reply" data-action="sim-cakto" data-event="customer_reply" style="justify-content: center; background: rgba(16, 185, 129, 0.15); border-color: rgba(16, 185, 129, 0.4); color: var(--status-success);">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-                </svg>
-                <span>Simular Resposta do Cliente</span>
-              </button>
-            </div>
-          </div>
-
-          <!-- Painel de Telemetria da Simulação -->
-          <div id="sim-telemetry-box" style="display: none; background: var(--bg-primary); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px; margin-top: 14px; font-size: 12px;">
-            <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
-              <span style="color: var(--text-secondary);">Evento / Ação:</span>
-              <code id="sim-res-event" class="tabular-nums">-</code>
-            </div>
-            <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
-              <span style="color: var(--text-secondary);">Transação Cakto ID:</span>
-              <code id="sim-res-txid" class="tabular-nums">-</code>
-            </div>
-            <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
-              <span style="color: var(--text-secondary);">Assinatura HMAC SHA-256:</span>
-              <code id="sim-res-hmac" class="tabular-nums" style="max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">-</code>
-            </div>
-            <div style="display: flex; justify-content: space-between;">
-              <span style="color: var(--text-secondary);">Resultado:</span>
-              <span id="sim-res-status" class="badge badge-success">OK</span>
+            <div style="background: var(--bg-primary); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 14px; display: flex; flex-direction: column; justify-content: space-between;">
+              <span class="form-label" style="margin-bottom: 6px;">Status dos Motores em Tempo Real</span>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 12px;">
+                <div>
+                  <span style="color: var(--text-muted);">Worker Anti-Ban:</span>
+                  <div style="color: var(--status-success); font-weight: 500;">Ativo (5s + Jitter)</div>
+                </div>
+                <div>
+                  <span style="color: var(--text-muted);">Banco de Dados:</span>
+                  <div style="color: var(--status-success); font-weight: 500;">SQLite 3 (WAL)</div>
+                </div>
+                <div>
+                  <span style="color: var(--text-muted);">Motor WhatsApp:</span>
+                  <div id="dash-wa-status-text" style="color: var(--status-warning); font-weight: 500;">Verificando...</div>
+                </div>
+                <div>
+                  <span style="color: var(--text-muted);">Homologação:</span>
+                  <a href="#tab-testes" onclick="switchTab('testes'); return false;" style="color: var(--accent-primary); font-weight: 500; text-decoration: none;">Ir para Área de Testes &rarr;</a>
+                </div>
+              </div>
             </div>
           </div>
         </div>
       </div>
 
-      <div class="content-grid">
+      <div class="content-grid" style="margin-bottom: 24px;">
         <div class="card">
           <div class="card-header">
             <div class="card-title">
@@ -806,8 +775,44 @@
           </div>
         </div>
 
-        <div class="card" id="card-whatsapp-auth">
+        <div class="card">
           <div class="card-header">
+            <div class="card-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="9" cy="21" r="1"></circle>
+                <circle cx="20" cy="21" r="1"></circle>
+                <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path>
+              </svg>
+              Últimos Pedidos Recebidos
+            </div>
+            <button class="btn" data-action="refresh-orders" data-id="dash-orders-refresh">
+              <span>Recarregar</span>
+            </button>
+          </div>
+          <div class="card-body" style="padding: 0;">
+            <div class="table-responsive">
+              <table id="dash-orders-table">
+                <thead>
+                  <tr>
+                    <th>Transação</th>
+                    <th>Evento</th>
+                    <th>Status</th>
+                    <th>Data</th>
+                  </tr>
+                </thead>
+                <tbody id="dash-orders-body">
+                  <tr>
+                    <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 24px;">Carregando pedidos...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" id="card-whatsapp-auth">
+        <div class="card-header">
             <div class="card-title">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
@@ -956,7 +961,6 @@
             </div>
           </div>
         </div>
-      </div>
     </section>
 
     <!-- Tab: Projetos Multi-Tenant & Cakto -->
@@ -1505,16 +1509,129 @@
         <div style="color: var(--text-muted); font-size: 13px; padding: 24px;">Carregando gatilhos do projeto...</div>
       </div>
     </section>
-    <section id="tab-configuracoes" class="tab-panel" role="tabpanel">
-      <div class="content-grid">
-        <div class="card">
-          <div class="card-header">
+
+    <!-- Tab 8: Área de Testes (Sandbox) -->
+    <section id="tab-testes" class="tab-panel" role="tabpanel">
+      <div style="margin-bottom: 20px; padding: 16px; background: rgba(99, 102, 241, 0.08); border: 1px solid rgba(99, 102, 241, 0.25); border-radius: var(--radius-md); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+        <div>
+          <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 2px; font-size: 15px;">
+            Ambiente Sandbox & Laboratório de Testes
+          </div>
+          <div style="font-size: 12px; color: var(--text-secondary);">
+            Valide o disparo no seu WhatsApp real e simule payloads de webhook da Cakto com segurança sem interferir na operação de produção.
+          </div>
+        </div>
+        <span class="badge badge-info">Ambiente Isolado</span>
+      </div>
+
+      <!-- Grid de Testes 1: Simuladores de Disparo e Webhook -->
+      <div class="content-grid" style="margin-bottom: 24px;">
+        <!-- Card: Testar Funil no Meu WhatsApp -->
+        <div class="card" id="card-simulador-whatsapp">
+          <div class="card-header" style="background: var(--bg-elevated); display: flex; justify-content: space-between; align-items: center;">
             <div class="card-title">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--accent-primary);">
                 <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
               </svg>
-              Simulador de Funil (Teste End-to-End - Webhook Cakto)
+              Testar Funil no Meu WhatsApp
             </div>
+            <span class="badge badge-info" id="sim-badge">Disparo Real</span>
+          </div>
+          <div class="card-body">
+            <div id="sim-alert" class="alert-box"></div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px;">
+              <div class="form-group" style="margin-bottom: 0;">
+                <label class="form-label" for="sim-phone">Seu Telefone (com DDD)</label>
+                <input id="sim-phone" class="form-control tabular-nums" type="text" placeholder="Ex: 5511998877665">
+                <span style="font-size: 11px; color: var(--text-muted); margin-top: 4px; display: block;">Número salvo localmente no seu navegador.</span>
+              </div>
+
+              <div class="form-group" style="margin-bottom: 0;">
+                <label class="form-label" for="sim-name">Nome do Cliente</label>
+                <input id="sim-name" class="form-control" type="text" placeholder="Ex: Rodrigo Silva" value="Rodrigo Teste">
+                <span style="font-size: 11px; color: var(--text-muted); margin-top: 4px; display: block;">Usado na tag {primeiro_nome}.</span>
+              </div>
+            </div>
+
+            <div>
+              <span class="form-label" style="margin-bottom: 8px;">Ações de Teste Rápido:</span>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                <button type="button" class="btn" id="btn-sim-pix" data-action="sim-cakto" data-event="pix_generated" style="justify-content: center; background: rgba(245, 158, 11, 0.12); border-color: rgba(245, 158, 11, 0.35); color: var(--status-warning);">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="2" y="5" width="20" height="14" rx="2"></rect>
+                    <line x1="2" y1="10" x2="22" y2="10"></line>
+                  </svg>
+                  <span>Simular PIX Gerado</span>
+                </button>
+
+                <button type="button" class="btn btn-primary" id="btn-sim-main" data-action="sim-cakto" data-event="purchase_approved" data-product="MAIN" style="justify-content: center;">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                    <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                  </svg>
+                  <span>Compra Aprovada (Principal)</span>
+                </button>
+
+                <button type="button" class="btn" id="btn-sim-upsell" data-action="sim-cakto" data-event="purchase_approved" data-product="UPSELL_1" style="justify-content: center; background: rgba(99, 102, 241, 0.18); border-color: var(--accent-primary); color: #fff;">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="12" y1="19" x2="12" y2="5"></line>
+                    <polyline points="5 12 12 5 19 12"></polyline>
+                  </svg>
+                  <span>Compra Upsell 1</span>
+                </button>
+
+                <button type="button" class="btn" id="btn-sim-downsell" data-action="sim-cakto" data-event="purchase_approved" data-product="DOWNSELL" style="justify-content: center; background: rgba(14, 165, 233, 0.15); border-color: rgba(14, 165, 233, 0.4); color: var(--status-info);">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="7 13 12 18 17 13"></polyline>
+                    <polyline points="7 6 12 11 17 6"></polyline>
+                  </svg>
+                  <span>Compra Downsell</span>
+                </button>
+
+                <button type="button" class="btn" id="btn-sim-reply" data-action="sim-cakto" data-event="customer_reply" style="grid-column: span 2; justify-content: center; background: rgba(16, 185, 129, 0.15); border-color: rgba(16, 185, 129, 0.4); color: var(--status-success);">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                  </svg>
+                  <span>Simular Resposta do Cliente</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Telemetria -->
+            <div id="sim-telemetry-box" style="display: none; background: var(--bg-primary); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px; margin-top: 14px; font-size: 12px;">
+              <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+                <span style="color: var(--text-secondary);">Evento / Ação:</span>
+                <code id="sim-res-event" class="tabular-nums">-</code>
+              </div>
+              <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+                <span style="color: var(--text-secondary);">Transação Cakto ID:</span>
+                <code id="sim-res-txid" class="tabular-nums">-</code>
+              </div>
+              <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+                <span style="color: var(--text-secondary);">Assinatura HMAC:</span>
+                <code id="sim-res-hmac" class="tabular-nums" style="max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">-</code>
+              </div>
+              <div style="display: flex; justify-content: space-between;">
+                <span style="color: var(--text-secondary);">Resultado:</span>
+                <span id="sim-res-status" class="badge badge-success">OK</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card: Simulador de Webhook Cakto (End-to-End) -->
+        <div class="card">
+          <div class="card-header" style="background: var(--bg-elevated); display: flex; justify-content: space-between; align-items: center;">
+            <div class="card-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="3" width="20" height="14" rx="2"></rect>
+                <line x1="8" y1="21" x2="16" y2="21"></line>
+                <line x1="12" y1="17" x2="12" y2="21"></line>
+              </svg>
+              Simulador de Webhook Cakto (End-to-End)
+            </div>
+            <span class="badge badge-info">HTTP POST</span>
           </div>
           <div class="card-body">
             <div id="test-webhook-alert" class="alert-box"></div>
@@ -1522,30 +1639,154 @@
               <div class="form-group">
                 <label class="form-label" for="wh-event">Tipo de Evento</label>
                 <select id="wh-event" class="form-control">
-                  <option value="pix_generated">pix_generated (Pix Gerado - Produto Principal)</option>
-                  <option value="purchase_approved_main">purchase_approved (Compra Aprovada - Produto Principal)</option>
+                  <option value="pix_generated">pix_generated (Pix Gerado - Principal)</option>
+                  <option value="purchase_approved_main">purchase_approved (Compra Aprovada - Principal)</option>
                   <option value="purchase_approved_upsell_1">purchase_approved (Compra Aprovada - Upsell 1)</option>
                   <option value="purchase_approved_downsell">purchase_approved (Compra Aprovada - Downsell)</option>
                   <option value="purchase_approved_upsell_2">purchase_approved (Compra Aprovada - Upsell 2)</option>
                   <option value="purchase_refunded">purchase_refunded (Reembolso / Estorno)</option>
                 </select>
               </div>
-              <div class="form-group">
-                <label class="form-label" for="wh-name">Nome do Cliente</label>
-                <input id="wh-name" class="form-control" type="text" value="Lucas Teste" placeholder="Nome Completo">
-              </div>
-              <div class="form-group">
-                <label class="form-label" for="wh-phone">Telefone (DDD + Numero)</label>
-                <input id="wh-phone" class="form-control tabular-nums" type="text" value="11998877665" placeholder="Ex: 11998877665">
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                <div class="form-group">
+                  <label class="form-label" for="wh-name">Nome do Cliente</label>
+                  <input id="wh-name" class="form-control" type="text" value="Lucas Teste" placeholder="Nome Completo">
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="wh-phone">Telefone (com DDD)</label>
+                  <input id="wh-phone" class="form-control tabular-nums" type="text" value="11998877665" placeholder="Ex: 11998877665">
+                </div>
               </div>
               <div class="form-group">
                 <label class="form-label" for="wh-secret">Secret Cakto (Opcional - usa .env se vazio)</label>
-                <input id="wh-secret" class="form-control" type="password" placeholder="Segredo para autenticacao do webhook">
+                <input id="wh-secret" class="form-control" type="password" placeholder="Segredo para autenticação do webhook">
               </div>
-              <button type="submit" class="btn btn-primary" data-action="test-webhook" data-id="btn-send-test-webhook">
+              <button type="submit" class="btn btn-primary" data-action="test-webhook" data-id="btn-send-test-webhook" style="width: 100%; justify-content: center;">
                 <span class="btn-text">Disparar Webhook de Teste</span>
               </button>
             </form>
+          </div>
+        </div>
+      </div>
+
+      <!-- Grid de Testes 2: Spintax e Diagnostico Conexao Webhook -->
+      <div class="content-grid">
+        <!-- Card: Teste de Spintax & Tags Dinamicas -->
+        <div class="card">
+          <div class="card-header" style="background: var(--bg-elevated); display: flex; justify-content: space-between; align-items: center;">
+            <div class="card-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+              </svg>
+              Laboratório de Spintax & Variáveis Dinâmicas
+            </div>
+            <span class="badge badge-info">Anti-Ban</span>
+          </div>
+          <div class="card-body">
+            <div class="form-group">
+              <label class="form-label" for="sandbox-spintax-input">Texto com Spintax e Tags</label>
+              <textarea id="sandbox-spintax-input" class="form-control" rows="3" style="font-size: 13px;">{Olá|Oi|E aí} {first_name}, {seu acesso|seu produto|seu pacote} para {product_name} está pronto! Acesse: {checkout_url}</textarea>
+            </div>
+            <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+              <button type="button" class="btn btn-primary" id="btn-test-spintax" style="flex: 1; justify-content: center;">
+                <span>Gerar Variação Aleatória</span>
+              </button>
+            </div>
+            <div style="background: var(--bg-primary); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px;">
+              <span class="form-label" style="font-size: 11px; margin-bottom: 4px;">Resultado Renderizado:</span>
+              <div id="sandbox-spintax-output" style="font-size: 13px; color: var(--text-primary); min-height: 40px; white-space: pre-wrap;">Clique no botão acima para renderizar uma variação.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card: Diagnostico de Conectividade do Webhook -->
+        <div class="card">
+          <div class="card-header" style="background: var(--bg-elevated); display: flex; justify-content: space-between; align-items: center;">
+            <div class="card-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="2" y1="12" x2="22" y2="12"></line>
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+              </svg>
+              Diagnóstico de Conectividade do Webhook
+            </div>
+            <span class="badge badge-info">Rede & CORS</span>
+          </div>
+          <div class="card-body">
+            <div style="margin-bottom: 14px; font-size: 12px; color: var(--text-secondary);">
+              Verifique se o endpoint da Cakto está respondendo com HTTP 200 OK e tempo de resposta adequado.
+            </div>
+            <div class="form-group">
+              <label class="form-label">Endpoint Testado</label>
+              <input id="diagnostic-url-input" class="form-control tabular-nums" type="text" readonly style="background: var(--bg-surface); font-size: 12px;" value="/api/webhook/cakto">
+            </div>
+            <button type="button" class="btn" id="btn-test-webhook-connectivity" style="width: 100%; justify-content: center; margin-bottom: 12px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="23 4 23 10 17 10"></polyline>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+              </svg>
+              <span>Testar Conexão Local do Webhook (GET)</span>
+            </button>
+            <div id="diagnostic-result-box" style="display: none; background: var(--bg-primary); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px; font-size: 12px;">
+              <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                <span style="color: var(--text-secondary);">Status HTTP:</span>
+                <span id="diagnostic-status-code" class="badge badge-success">200 OK</span>
+              </div>
+              <div style="display: flex; justify-content: space-between;">
+                <span style="color: var(--text-secondary);">Tempo de Resposta:</span>
+                <span id="diagnostic-latency" class="tabular-nums" style="color: var(--text-primary);">-</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 9: Configurações -->
+    <section id="tab-configuracoes" class="tab-panel" role="tabpanel">
+      <div class="content-grid">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="4" width="20" height="16" rx="2"></rect>
+                <line x1="2" y1="10" x2="22" y2="10"></line>
+              </svg>
+              Configurações do Webhook Cakto (Produção)
+            </div>
+          </div>
+          <div class="card-body">
+            <div id="settings-alert-box" class="alert-box" style="display: none;"></div>
+            <div style="display: flex; flex-direction: column; gap: 14px;">
+              <div class="form-group" style="margin-bottom: 0;">
+                <label class="form-label" for="cfg-cakto-url">URL de Produção para a Cakto (HTTPS)</label>
+                <input id="cfg-cakto-url" class="form-control tabular-nums" type="text" readonly style="background: var(--bg-surface); font-size: 12px;" value="https://18.191.162.237.sslip.io/api/webhook/cakto">
+                <span style="font-size: 11px; color: var(--text-muted); margin-top: 4px; display: block;">Esta é a URL que deve ser colada no painel da Cakto em "Adicionar Webhook".</span>
+              </div>
+
+              <div class="form-group" style="margin-bottom: 0;">
+                <label class="form-label" for="cfg-cakto-secret">Chave Secreta do Webhook Cakto (HMAC)</label>
+                <div style="display: flex; gap: 8px;">
+                  <input id="cfg-cakto-secret" class="form-control" type="text" placeholder="Cole aqui a chave secreta gerada pela Cakto">
+                  <button type="button" class="btn btn-primary" id="btn-save-global-secret" style="flex-shrink: 0;">
+                    <span>Salvar Chave</span>
+                  </button>
+                </div>
+                <span style="font-size: 11px; color: var(--text-muted); margin-top: 4px; display: block;">Copie a "Chave secreta do webhook" exibida no modal da Cakto para validar assinaturas HMAC com 100% de precisão.</span>
+              </div>
+
+              <div style="background: var(--bg-primary); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px; font-size: 12px;">
+                <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 6px;">Como Configurar na Cakto:</div>
+                <ol style="padding-left: 18px; color: var(--text-secondary); display: flex; flex-direction: column; gap: 4px;">
+                  <li>No painel Cakto, acesse <strong>Webhooks &gt; Adicionar Webhook</strong>.</li>
+                  <li>Cole a <strong>URL de Produção (HTTPS)</strong> acima.</li>
+                  <li>Selecione o produto desejado e os eventos: <strong>Compra aprovada, Compra recusada, Reembolso, Chargeback</strong>.</li>
+                  <li>Copie a <strong>Chave secreta do webhook</strong> gerada pela Cakto e salve no campo acima.</li>
+                  <li>Clique em <strong>Salvar</strong> na Cakto.</li>
+                </ol>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1629,6 +1870,7 @@
         panel.classList.toggle('active', panel.id === `tab-${tabName}`);
       });
 
+      if (tabName === "dashboard") { loadQueue(); loadOrders(); loadStatus(); }
       if (tabName === "projetos") loadProjects();
       if (tabName === "fila") loadQueue();
       if (tabName === "pedidos") loadOrders();
@@ -1685,6 +1927,20 @@
         const connectedPhone = waObj.connectedPhone || data.connectedPhone || data.whatsapp_details?.connectedPhone || null;
 
         if (waText) waText.textContent = `WhatsApp: ${waStatus}`;
+
+        const dashWaText = document.getElementById("dash-wa-status-text");
+        if (dashWaText) {
+          if (waStatus === "CONNECTED") {
+            dashWaText.textContent = connectedPhone ? `Conectado (${connectedPhone})` : "Conectado e Operacional";
+            dashWaText.style.color = "var(--status-success)";
+          } else if (waStatus === "CONNECTING") {
+            dashWaText.textContent = "Conectando / Aguardando QR";
+            dashWaText.style.color = "var(--status-warning)";
+          } else {
+            dashWaText.textContent = "Desconectado (Pareamento Necessário)";
+            dashWaText.style.color = "var(--status-danger)";
+          }
+        }
 
         if (waStatus === "CONNECTED") {
           if (waBadge) waBadge.className = "badge badge-success";
@@ -1876,24 +2132,40 @@
         state.orders = data.orders || [];
 
         const tbody = document.getElementById("orders-body");
-        if (!tbody) return;
-
-        if (state.orders.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 32px;">Nenhum pedido registrado ainda.</td></tr>';
-          return;
+        if (tbody) {
+          if (state.orders.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 32px;">Nenhum pedido registrado ainda.</td></tr>';
+          } else {
+            tbody.innerHTML = state.orders.map(order => `
+              <tr>
+                <td class="tabular-nums"><code>${escapeHtml(order.transaction_id)}</code></td>
+                <td class="tabular-nums" style="font-size: 11px;">${escapeHtml(order.customer_id.slice(0, 8))}...</td>
+                <td>${escapeHtml(order.product_id)}</td>
+                <td>${escapeHtml(order.offer_id)}</td>
+                <td><span class="badge badge-info">${escapeHtml(order.event_type)}</span></td>
+                <td><span class="badge badge-success">${escapeHtml(order.status)}</span></td>
+                <td class="tabular-nums">${escapeHtml(order.created_at)}</td>
+              </tr>
+            `).join("");
+          }
         }
 
-        tbody.innerHTML = state.orders.map(order => `
-          <tr>
-            <td class="tabular-nums"><code>${escapeHtml(order.transaction_id)}</code></td>
-            <td class="tabular-nums" style="font-size: 11px;">${escapeHtml(order.customer_id.slice(0, 8))}...</td>
-            <td>${escapeHtml(order.product_id)}</td>
-            <td>${escapeHtml(order.offer_id)}</td>
-            <td><span class="badge badge-info">${escapeHtml(order.event_type)}</span></td>
-            <td><span class="badge badge-success">${escapeHtml(order.status)}</span></td>
-            <td class="tabular-nums">${escapeHtml(order.created_at)}</td>
-          </tr>
-        `).join("");
+        const dashOrdersTbody = document.getElementById("dash-orders-body");
+        if (dashOrdersTbody) {
+          const recentOrders = state.orders.slice(0, 5);
+          if (recentOrders.length === 0) {
+            dashOrdersTbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 24px;">Nenhum pedido registrado ainda.</td></tr>';
+          } else {
+            dashOrdersTbody.innerHTML = recentOrders.map(order => `
+              <tr>
+                <td class="tabular-nums" style="font-size: 12px;"><code>${escapeHtml(order.transaction_id.slice(0, 12))}</code></td>
+                <td><span class="badge badge-info" style="font-size: 11px;">${escapeHtml(order.event_type)}</span></td>
+                <td><span class="badge badge-success" style="font-size: 11px;">${escapeHtml(order.status)}</span></td>
+                <td class="tabular-nums" style="font-size: 11px;">${escapeHtml(order.created_at)}</td>
+              </tr>
+            `).join("");
+          }
+        }
       } catch (err) {
         console.error("Erro ao carregar pedidos:", err);
       }
@@ -3271,10 +3543,138 @@
         });
       }
 
+      // Inicializacao de URLs do Webhook Cakto
+      const officialHttpsUrl = "https://18.191.162.237.sslip.io/api/webhook/cakto";
+      const prodWhInput = document.getElementById("prod-webhook-url-input");
+      const cfgCaktoUrl = document.getElementById("cfg-cakto-url");
+      if (prodWhInput) prodWhInput.value = officialHttpsUrl;
+      if (cfgCaktoUrl) cfgCaktoUrl.value = officialHttpsUrl;
+
+      // Botão Copiar URL no Dashboard
+      const btnCopyWh = document.getElementById("btn-copy-prod-webhook");
+      if (btnCopyWh) {
+        btnCopyWh.addEventListener("click", () => {
+          const val = prodWhInput ? prodWhInput.value : officialHttpsUrl;
+          if (navigator.clipboard) {
+            navigator.clipboard.writeText(val).then(() => {
+              const txt = document.getElementById("copy-wh-text");
+              if (txt) {
+                const prev = txt.textContent;
+                txt.textContent = "Copiado!";
+                setTimeout(() => { txt.textContent = prev; }, 2000);
+              }
+            }).catch(() => {
+              if (prodWhInput) {
+                prodWhInput.select();
+                document.execCommand("copy");
+              }
+            });
+          }
+        });
+      }
+
+      // Salvar Chave Secreta Global em Configurações
+      const btnSaveSecret = document.getElementById("btn-save-global-secret");
+      if (btnSaveSecret) {
+        btnSaveSecret.addEventListener("click", async () => {
+          const secretInput = document.getElementById("cfg-cakto-secret");
+          const alertBox = document.getElementById("settings-alert-box");
+          const val = secretInput ? secretInput.value.trim() : "";
+          if (!val) {
+            if (alertBox) {
+              alertBox.className = "alert-box error";
+              alertBox.textContent = "Erro: informe a chave secreta da Cakto antes de salvar.";
+              alertBox.style.display = "block";
+            }
+            return;
+          }
+          btnSaveSecret.disabled = true;
+          try {
+            const res = await fetch("/api/settings", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ key: "cakto_webhook_secret", value: val }),
+            });
+            const data = await res.json();
+            if (res.ok && data.success) {
+              if (alertBox) {
+                alertBox.className = "alert-box success";
+                alertBox.textContent = "Chave secreta do Webhook Cakto salva com sucesso no banco de dados!";
+                alertBox.style.display = "block";
+              }
+            } else {
+              throw new Error(data.error || "Falha ao salvar configuração");
+            }
+          } catch (err) {
+            if (alertBox) {
+              alertBox.className = "alert-box error";
+              alertBox.textContent = `Erro ao salvar: ${err.message || String(err)}`;
+              alertBox.style.display = "block";
+            }
+          } finally {
+            btnSaveSecret.disabled = false;
+          }
+        });
+      }
+
+      // Testador de Spintax na Área de Testes
+      const btnTestSpintax = document.getElementById("btn-test-spintax");
+      if (btnTestSpintax) {
+        btnTestSpintax.addEventListener("click", () => {
+          const inputEl = document.getElementById("sandbox-spintax-input");
+          const outputEl = document.getElementById("sandbox-spintax-output");
+          if (!inputEl || !outputEl) return;
+          let text = inputEl.value;
+          text = text.replace(/{first_name}|{nome}|{primeiro_nome}/gi, "Rodrigo");
+          text = text.replace(/{product_name}|{produto}/gi, "Combo Natal Descomplicado");
+          text = text.replace(/{checkout_url}|{link}/gi, "https://pay.cakto.com.br/demo");
+          text = text.replace(/\{([^{}]+)\}/g, (_match, group) => {
+            const parts = group.split("|").map(p => p.trim());
+            return parts[Math.floor(Math.random() * parts.length)] || "";
+          });
+          outputEl.textContent = text;
+        });
+      }
+
+      // Diagnóstico de Conectividade do Webhook na Área de Testes
+      const btnTestWhConn = document.getElementById("btn-test-webhook-connectivity");
+      if (btnTestWhConn) {
+        btnTestWhConn.addEventListener("click", async () => {
+          const resBox = document.getElementById("diagnostic-result-box");
+          const codeEl = document.getElementById("diagnostic-status-code");
+          const latEl = document.getElementById("diagnostic-latency");
+          btnTestWhConn.disabled = true;
+          const t0 = performance.now();
+          try {
+            const res = await fetch("/api/webhook/cakto");
+            const t1 = performance.now();
+            const latency = Math.round(t1 - t0);
+            if (resBox && codeEl && latEl) {
+              resBox.style.display = "block";
+              codeEl.textContent = `${res.status} ${res.statusText || "OK"}`;
+              codeEl.className = res.ok ? "badge badge-success" : "badge badge-danger";
+              latEl.textContent = `${latency} ms`;
+            }
+          } catch (err) {
+            const t1 = performance.now();
+            const latency = Math.round(t1 - t0);
+            if (resBox && codeEl && latEl) {
+              resBox.style.display = "block";
+              codeEl.textContent = "Erro de Conexão";
+              codeEl.className = "badge badge-danger";
+              latEl.textContent = `${latency} ms (${err.message})`;
+            }
+          } finally {
+            btnTestWhConn.disabled = false;
+          }
+        });
+      }
+
       // Carga inicial (F5 reload persistence)
       loadStatus();
       loadProjects();
       loadQueue();
+      loadOrders();
       loadTemplates();
       loadTriggers();
 
