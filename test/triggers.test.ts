@@ -53,6 +53,7 @@ describe("Gatilhos do Funil e Regras de Automacao (funnel_triggers)", () => {
     const res = await fetch(`${baseUrl}/api/triggers?project_id=default`);
     assert.equal(res.status, 200);
     const body = (await res.json()) as any;
+    console.log("DEBUG_TRIGGERS_VPS:", body.triggers.map((t: any) => t.trigger_key));
 
     assert.equal(body.success, true);
     assert.equal(body.total, 8);
