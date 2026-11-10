@@ -343,7 +343,7 @@ export class QueueWorker {
       }
       this.repos.transaction(() => {
         if (dispatchResult.success) {
-          this.repos.messageQueue.markAsSent(job.id);
+          this.repos.messageQueue.markAsSent(job.id, dispatchResult.messageId);
         } else {
           this.repos.messageQueue.markAsFailed(
             job.id, dispatchResult.error ?? "Erro no despacho WhatsApp", this.maxAttempts, this.retryDelaySeconds

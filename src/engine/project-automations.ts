@@ -163,13 +163,19 @@ export function scheduleProjectAutomations(
     const conditions = { ...(configured ?? {}), marketing: configured?.marketing ?? isMarketingStage(rule.trigger_key) };
     const template = rule.template_id ? repos.templates.findById(rule.template_id) : null;
     let reason: string | undefined;
+
+    const eventOfferType = (event.offerType || "main").toLowerCase();
+    const condOfferType = conditions.offer_type ? conditions.offer_type.toLowerCase() : undefined;
+    const condStatus = conditions.status ? conditions.status.toUpperCase() : undefined;
+    const eventStatus = (event.status || "").toUpperCase();
+
     if (!rule.is_active && !simulation) reason = "Automação pausada.";
     else if (!configured && !matchesLegacyStage(rule, event)) reason = "O evento não pertence à etapa desta automação.";
     else if (
       (conditions.product_id && conditions.product_id !== event.product.id) ||
       (conditions.offer_id && conditions.offer_id !== event.product.offerId) ||
-      (conditions.offer_type && conditions.offer_type !== event.offerType) ||
-      (conditions.status && conditions.status !== event.status)
+      (condOfferType && condOfferType !== eventOfferType) ||
+      (condStatus && condStatus !== eventStatus)
     ) reason = "O evento não atende às condições.";
     else reason = ineligibility(repos.db, conditions, order, customer, customer.current_state);
 
@@ -180,8 +186,15 @@ export function scheduleProjectAutomations(
     reason ??= result ? result.error : "Template do projeto indisponível.";
     if (!reason && result) {
       const job = repos.messageQueue.enqueue({
-        project_id: project.id, customer_id: customer.id, phone: customer.phone, jid: customer.jid,
-        message_type: result.type, content: result.content, media_path: result.mediaPath, scheduled_at: schedule,
+        project_id: project.id,
+        customer_id: customer.id,
+        phone: customer.phone,
+        jid: customer.jid,
+        message_type: result.type,
+        content: result.content,
+        media_path: result.mediaPath,
+        scheduled_at: schedule,
+        is_test: order.is_test ?? 0,
       });
       repos.db.prepare("INSERT INTO automation_executions (job_id, trigger_id, order_id) VALUES (?, ?, ?)")
         .run(job.id, rule.id, order.id);

@@ -198,6 +198,32 @@ export function normalizeEventType(rawEvent: string | undefined | null, rawStatu
   return event || "unknown_event";
 }
 
+export function extractOfferType(data: Record<string, any>, body: Record<string, any>): string {
+  const direct =
+    data.offer_type ||
+    body.offer_type ||
+    data.offer?.type ||
+    body.offer?.type ||
+    data.product_type ||
+    body.product_type ||
+    data.type ||
+    body.type;
+
+  if (typeof direct === "string" && direct.trim()) {
+    const lower = direct.trim().toLowerCase();
+    if (lower.includes("bump")) return "orderbump";
+    if (lower.includes("upsell")) return "upsell";
+    if (lower.includes("downsell")) return "downsell";
+    if (lower.includes("main") || lower.includes("principal")) return "main";
+    return lower;
+  }
+
+  if (data.is_orderbump || body.is_orderbump || data.is_bump || body.is_bump) return "orderbump";
+  if (data.is_upsell || body.is_upsell) return "upsell";
+
+  return "main";
+}
+
 /**
  * Normaliza o payload bruto da Cakto para o DTO limpo interno
  */
@@ -305,7 +331,7 @@ export function normalizeCaktoWebhook(rawBody: unknown): NormalizedCaktoPayload 
     transactionId,
     eventType,
     status,
-    offerType: typeof data.offer_type === "string" ? data.offer_type : undefined,
+    offerType: extractOfferType(data, body),
     amount: typeof data.amount === "number" && Number.isFinite(data.amount) ? data.amount : undefined,
     currency: typeof data.currency === "string" ? data.currency : undefined,
     customer: {
@@ -331,11 +357,16 @@ export interface ProcessWebhookResult {
 
 export interface ProcessWebhookRepositories {
   readonly customerRepo?: CustomerRepository;
+  readonly customers?: CustomerRepository;
   readonly orderRepo?: OrderRepository;
+  readonly orders?: OrderRepository;
   readonly auditRepo?: AuditLogRepository;
+  readonly auditLogs?: AuditLogRepository;
   readonly templateRepo?: TemplateRepository;
+  readonly templates?: TemplateRepository;
   readonly funnelTriggers?: FunnelTriggerRepository;
   readonly projectRepo?: ProjectRepository;
+  readonly projects?: ProjectRepository;
 }
 
 /**
@@ -344,11 +375,12 @@ export interface ProcessWebhookRepositories {
 export function processNormalizedWebhook(
   payload: NormalizedCaktoPayload,
   repos: ProcessWebhookRepositories = {},
-  projectId?: string
+  projectId?: string,
+  options: { isTest?: boolean } = {}
 ): ProcessWebhookResult {
-  const custRepo = repos.customerRepo ?? customerRepository;
-  const ordRepo = repos.orderRepo ?? orderRepository;
-  const audRepo = repos.auditRepo ?? auditLogRepository;
+  const custRepo = repos.customers ?? repos.customerRepo ?? customerRepository;
+  const ordRepo = repos.orders ?? repos.orderRepo ?? orderRepository;
+  const audRepo = repos.auditLogs ?? repos.auditRepo ?? auditLogRepository;
   const targetProjectId = projectId || "default";
   const duplicate = ordRepo.findByTransactionAndEvent(payload.transactionId, payload.eventType, targetProjectId);
   if (duplicate) {
@@ -377,6 +409,7 @@ export function processNormalizedWebhook(
     paid_at: payload.paidAt,
     raw_payload: payload.rawPayload,
     project_id: targetProjectId,
+    is_test: options.isTest ? 1 : 0,
   });
 
   // 3. Auditoria do evento

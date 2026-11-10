@@ -30,11 +30,39 @@ const eventLabels = {
   purchase_approved_upsell: "Upsell aprovado", purchase_approved_downsell: "Downsell aprovado",
 };
 const statusLabels = {
-  PENDING: "Pendente", PROCESSING: "Processando", SENT: "Enviada", FAILED: "Falha",
+  PENDING: "Agendada", PROCESSING: "Processando", SENT: "Enviada", DELIVERED: "Entregue", FAILED: "Falha de processamento",
   CANCELLED: "Cancelada", PROCESSED: "Validado", DUPLICATE: "Duplicado", AUTH_FAILED: "Falha de autenticação",
   INVALID_PAYLOAD: "Payload inválido", PRODUCT_MISMATCH: "Produto incompatível", PROBE: "Teste de conectividade",
   PROCESSING_ERROR: "Erro de processamento", PAID: "Pago", APPROVED: "Aprovado", REFUSED: "Recusado",
-  SIMULATED: "Agendamento simulado", NO_MATCH: "Sem agendamento",
+  SIMULATED: "Simulação concluída", NO_MATCH: "Sem agendamento", TEST: "Teste Real",
+};
+
+const jobStatus = (job) => {
+  let label = statusLabels[job.status] ?? job.status ?? "—";
+  let type = "";
+  if (job.status === "SENT") {
+    if (job.delivered_at) {
+      label = "Entregue";
+      type = "good";
+    } else {
+      label = "Enviada";
+      type = "good";
+    }
+  } else if (job.status === "PENDING") {
+    label = "Agendada";
+    type = "warn";
+  } else if (job.status === "PROCESSING") {
+    label = "Processando";
+    type = "warn";
+  } else if (job.status === "FAILED") {
+    label = "Falha de processamento";
+    type = "bad";
+  } else if (job.status === "CANCELLED") {
+    label = "Cancelada";
+    type = "";
+  }
+  const tag = job.is_test ? `<span class="pill" style="margin-left:4px;font-size:10px;opacity:0.8;">TESTE</span>` : "";
+  return badge(label, type) + tag;
 };
 
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({
@@ -487,26 +515,36 @@ async function automationDialog(project, rule, duplicate = false) {
 
 function renderQueue(project, { jobs }) {
   main.innerHTML = heading(project.name, "Fila de Mensagens", "Consulte os envios agendados e acompanhe os resultados deste projeto.") +
-    `<div class="stack"><div class="toolbar">${select("Status", "queue_status", [["", "Todos"], ...["PENDING", "PROCESSING", "SENT", "FAILED", "CANCELLED"].map((value) => [value, statusLabels[value]])], state.queueStatus, 'id="queue-status"')}${button("Atualizar", "refresh")}</div>` +
+    `<div class="stack"><div class="toolbar">
+      ${select("Status", "queue_status", [["", "Todos"], ...["PENDING", "PROCESSING", "SENT", "FAILED", "CANCELLED"].map((value) => [value, statusLabels[value]])], state.queueStatus, 'id="queue-status"')}
+      ${button("Atualizar", "refresh")}
+      ${button("Cancelar disparos de teste", "cancel-test-jobs", "danger")}
+    </div>` +
     table(["Tipo", "Destinatário", "Agendado para", "Status", "Tentativas", "Falha", "Ações"], jobs.map((job) => [
-      h(job.automation || job.message_type), h(job.phone), h(date(job.scheduled_at)), status(job.status), h(job.attempts),
+      h(job.automation || job.message_type), h(job.phone), h(date(job.scheduled_at)), jobStatus(job), h(job.attempts),
       h(job.last_error === "ENVIO_INDETERMINADO" ? "Envio indeterminado após interrupção" : job.last_error || "—"),
-      job.status === "PENDING" ? button("Cancelar", "cancel-job", "", job.id)
-        : job.status === "FAILED" && job.last_error !== "ENVIO_INDETERMINADO" ? button("Reprocessar", "retry-job", "", job.id) : "—",
+      `<div class="row compact">
+        ${button("Linha do tempo", "timeline-job", "", job.id)}
+        ${job.status === "PENDING" ? button("Cancelar", "cancel-job", "", job.id)
+          : job.status === "FAILED" && job.last_error !== "ENVIO_INDETERMINADO" ? button("Reprocessar", "retry-job", "", job.id) : ""}
+      </div>`,
     ]), "Nenhuma mensagem neste filtro") + "</div>";
 }
 
 function renderLab(project, { diagnostics, templates }) {
   const system = diagnostics.worker;
-  main.innerHTML = heading(project.name, "Laboratório de Testes", "Valide as regras com uma simulação e confira o conteúdo antes de enviar a um número autorizado.") +
+  main.innerHTML = heading(project.name, "Laboratório de Testes", "Valide as regras com simulação isolada ou execute disparos reais para números autorizados.") +
     `<div class="stack"><div class="grid">
       <section class="panel stack"><span class="tile">${icon(nav[3][2])}</span><h2>Testar mensagem</h2>
         <p>Veja a prévia de um template salvo e informe os dados do destinatário de teste.</p>
         <form id="choose-test" class="stack">${select("Template", "template_id", templates.map((tpl) => [tpl.id, tpl.name]), templates[0]?.id)}
         ${formError}<div><button class="button primary" type="submit"${templates.length ? "" : " disabled"}>Abrir teste de mensagem</button></div></form></section>
-      <section class="panel stack"><span class="tile">${icon(nav[6][2])}</span><h2>Simular evento Cakto</h2>
-        <p>Confira as condições, os templates e os horários de agendamento com dados de simulação.</p>
+      <section class="panel stack"><span class="tile">${icon(nav[6][2])}</span><h2>Simular evento Cakto (Dry Run)</h2>
+        <p>Confira as condições, os templates e os horários de agendamento em simulação isolada sem envio real.</p>
         <div>${button("Simular Webhook", "simulate-dialog", "primary")}</div></section>
+      <section class="panel stack"><span class="tile">${icon(nav[5][2])}</span><h2>Teste Real de Disparo</h2>
+        <p>Dispare para um número autorizado avaliando automações reais sem impactar vendas de produção.</p>
+        <div>${button("Novo Teste Real", "test-dispatch-dialog", "primary")}</div></section>
     </div>
     <section class="panel stack"><div class="card-head"><h2>Diagnóstico</h2>${button("Atualizar", "refresh")}</div>
     <div class="grid">
@@ -522,6 +560,165 @@ function renderLab(project, { diagnostics, templates }) {
     const template = templates.find((item) => item.id === template_id);
     if (template) testTemplateDialog(project, template);
   });
+}
+
+function testDispatchDialog(project) {
+  showDialog("Novo Teste Real de Disparo", `<form class="stack" id="form-test-dispatch">
+    <div class="notice">
+      Este teste avalia as regras reais do projeto e <strong>agenda o envio verdadeiro via WhatsApp</strong> para o número informado.<br>
+      O evento e a ordem são marcados como <code>TEST</code> e <strong>não afetam os relatórios nem as métricas de conversão de produção</strong>.
+    </div>
+    <div class="form-grid">
+      ${field("Seu WhatsApp para receber o teste", "phone", "", 'type="tel" required placeholder="5511999998888"')}
+      ${field("Nome do comprador de teste", "name", "Usuário Teste", "required")}
+      ${select("Evento a disparar", "event_type", Object.entries(eventLabels), "purchase_approved")}
+      ${select("Tipo da oferta", "offer_type", [["main", "Produto principal (main)"], ["upsell", "Upsell 1 / 2"], ["downsell", "Downsell"], ["orderbump", "Order Bump"]], "main")}
+      ${select("Comportamento do Delay", "fast_delay", [["fast", "Disparo imediato / rápido (2s para homologação)"], ["real", "Respeitar delay real configurado na regra"]], "fast")}
+      ${field("Valor da compra (R$)", "amount", "97.00", 'type="number" min="0" step="0.01"')}
+    </div>
+    <div class="stack compact">
+      ${check("Declaro expressamente que este número de WhatsApp me pertence ou foi autorizado para receber este teste de disparo.", "authorized", false, 'required')}
+      ${check("Simular que o destinatário autorizou mensagens de marketing (necessário para ofertas de upsell)", "marketing_consent", true)}
+    </div>
+    ${formError}
+    <div id="test-dispatch-result" class="stack" aria-live="polite"></div>
+    <div class="dialog-actions">
+      <button class="button primary" type="submit" id="btn-submit-test-dispatch">Executar Disparo Real de Teste</button>
+    </div>
+  </form>`, true);
+
+  bindForm(dialog.querySelector("#form-test-dispatch"), async ({ phone, name, event_type, offer_type, fast_delay, amount, authorized, marketing_consent }) => {
+    if (authorized !== "on") {
+      throw new Error("Confirme a autorização do número de telefone antes de disparar.");
+    }
+    const result = await api(endpoint(project, "test-dispatch"), "POST", {
+      phone,
+      name,
+      event_type,
+      offer_type,
+      fast_delay: fast_delay === "fast",
+      amount: amount ? Number(amount) : 97,
+      authorized: true,
+      marketing_consent: marketing_consent === "on",
+    });
+
+    const resultBox = dialog.querySelector("#test-dispatch-result");
+    const jobsCount = result.jobs ? result.jobs.length : 0;
+    resultBox.innerHTML = `
+      <div class="notice" style="border-left: 3px solid #22c55e;">
+        <strong>Disparo de teste iniciado!</strong><br>
+        Identificador do evento: <code>${h(result.transaction_id)}</code><br>
+        Mensagens agendadas: <strong>${jobsCount}</strong><br>
+        ${fast_delay === "fast" ? "O worker do WhatsApp processará os envios em poucos segundos." : "Os envios seguirão os delays configurados."}
+      </div>
+      ${table(["Automação", "Template", "Espera", "Resultado"], result.evaluations.map((rule) => [
+        h(rule.name), h(rule.template || "—"), h(formatDelay(rule.delay_seconds)), h(rule.result)
+      ]), "Nenhuma regra avaliada")}
+    `;
+    notify("Disparo de teste registrado.");
+  });
+}
+
+async function jobTimelineDialog(project, jobId) {
+  showDialog("Linha do tempo da mensagem", `<div class="stack" id="timeline-loading"><p class="muted">Carregando linha do tempo...</p></div>`, true);
+  try {
+    const data = await api(endpoint(project, `queue/${encodeURIComponent(jobId)}/timeline`));
+    const { job, order, webhook_event } = data;
+
+    const timelineContainer = dialog.querySelector("#timeline-loading");
+    if (!timelineContainer) return;
+
+    const steps = [
+      {
+        title: "1. Evento recebido",
+        time: webhook_event?.created_at || order?.created_at || job.created_at,
+        state: "good",
+        statusText: "Concluído",
+        desc: `Evento ${h(labelEvent(order?.event_type || webhook_event?.event_type || "Evento"))} recebido (${job.is_test ? "Identificado como TEST" : "Produção"})`,
+      },
+      {
+        title: "2. Validado",
+        time: order?.created_at || job.created_at,
+        state: "good",
+        statusText: "Concluído",
+        desc: `Transação ${h(order?.transaction_id || "Validada")} · Pedido registrado`,
+      },
+      {
+        title: "3. Automação identificada",
+        time: job.created_at,
+        state: "good",
+        statusText: "Concluído",
+        desc: `Regra: ${h(job.trigger_name || job.automation || "Automação")} · Template: ${h(job.template_name || "Template padrão")}`,
+      },
+      {
+        title: "4. Mensagem agendada",
+        time: job.scheduled_at,
+        state: "good",
+        statusText: "Concluído",
+        desc: `Agendado para envio (delay de ${formatDelay(job.delay_seconds || 0)})`,
+      },
+      {
+        title: "5. Processando",
+        time: job.status !== "PENDING" ? job.updated_at : null,
+        state: job.status === "PROCESSING" ? "warn" : job.status === "PENDING" ? "" : "good",
+        statusText: job.status === "PROCESSING" ? "Em andamento" : job.status === "PENDING" ? "Aguardando horário" : "Concluído",
+        desc: `Tentativas: ${job.attempts}`,
+      },
+      {
+        title: "6. Enviada",
+        time: job.status === "SENT" ? job.updated_at : null,
+        state: job.status === "SENT" ? "good" : job.status === "FAILED" ? "bad" : job.status === "CANCELLED" ? "warn" : "",
+        statusText: job.status === "SENT" ? "Enviada" : job.status === "FAILED" ? "Falha de processamento" : job.status === "CANCELLED" ? "Cancelada" : "Aguardando envio",
+        desc: job.status === "SENT" ? `Despachado ao WhatsApp (ID Meta: ${h(job.whatsapp_message_id || "gerado")})`
+          : job.status === "FAILED" ? "Falha na comunicação com o provedor WhatsApp"
+          : job.status === "CANCELLED" ? "Disparo cancelado antes do envio"
+          : "Aguardando execução do worker",
+        error: job.status === "FAILED" ? (job.last_error || "Erro no despacho") : undefined,
+      },
+      {
+        title: "7. Entregue",
+        time: job.delivered_at || null,
+        state: job.delivered_at ? "good" : job.status === "SENT" ? "warn" : "",
+        statusText: job.delivered_at ? "Entregue" : job.status === "SENT" ? "Aguardando confirmação do provedor" : (job.status === "FAILED" || job.status === "CANCELLED") ? "Não entregue" : "Aguardando envio",
+        desc: job.delivered_at ? "Confirmação de recebimento registrada do handset do destinatário (DELIVERY_ACK)."
+          : job.status === "SENT" ? "A mensagem foi despachada pela VPS. Aguardando recibo de entrega do aparelho do destinatário."
+          : "Entrega não realizada.",
+      },
+    ];
+
+    const timelineHtml = `
+      <div class="panel stack">
+        <div class="card-head">
+          <div>
+            <strong>Destinatário:</strong> ${h(job.phone)} · <strong>Tipo:</strong> ${h(job.message_type)}
+            ${job.is_test ? '<span class="pill" style="margin-left:6px;font-size:10px;">TESTE</span>' : ''}
+          </div>
+          <div>${jobStatus(job)}</div>
+        </div>
+        <div class="timeline">
+          ${steps.map((s, idx) => `
+            <div class="timeline-item">
+              <div class="timeline-dot ${s.state}">${idx + 1}</div>
+              <div class="timeline-head">
+                <span class="timeline-title">${h(s.title)}</span>
+                <span class="timeline-time">${s.time ? h(date(s.time)) : "—"}</span>
+              </div>
+              <div class="row compact" style="margin-bottom:4px;">
+                ${badge(s.statusText, s.state)}
+              </div>
+              <div class="timeline-desc">${h(s.desc)}</div>
+              ${s.error ? `<div class="timeline-error">${h(s.error)}</div>` : ""}
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    `;
+
+    timelineContainer.outerHTML = timelineHtml;
+  } catch (error) {
+    const timelineContainer = dialog.querySelector("#timeline-loading");
+    if (timelineContainer) timelineContainer.innerHTML = `<p class="notice error">Erro ao carregar linha do tempo: ${h(error.message)}</p>`;
+  }
 }
 
 function simulationDialog(project) {
@@ -849,6 +1046,15 @@ async function runAction(target) {
       await render();
       break;
     }
+    case "test-dispatch-dialog": testDispatchDialog(project); break;
+    case "cancel-test-jobs":
+      confirmAction("Cancelar disparos de teste", "Deseja cancelar todas as mensagens de teste que ainda estão agendadas na fila deste projeto?", "Cancelar disparos de teste", async () => {
+        const res = await api(endpoint(project, "queue/cancel-test-jobs"), "POST", {});
+        notify(`${res.cancelled_count} mensagens de teste canceladas.`);
+        await render();
+      });
+      break;
+    case "timeline-job": await jobTimelineDialog(project, id); break;
     case "whatsapp-dialog": connectionDialog(); break;
     case "wa-reconnect":
     case "wa-disconnect":

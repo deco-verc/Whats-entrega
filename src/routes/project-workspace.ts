@@ -4,8 +4,8 @@ import path from "node:path";
 import { raw, Router, type Request, type Response } from "express";
 import type Database from "better-sqlite3";
 import { createRepositories, type Project } from "../database/repositories.js";
-import { AUTOMATION_EVENTS, isLegacyAutomationKey, projectMediaPath, projectTemplateVariables, renderProjectTemplate } from "../engine/project-automations.js";
-import { sanitizePhone } from "../webhooks/adapters.js";
+import { AUTOMATION_EVENTS, isLegacyAutomationKey, projectMediaPath, projectTemplateVariables, renderProjectTemplate, scheduleProjectAutomations } from "../engine/project-automations.js";
+import { sanitizePhone, normalizeCaktoWebhook, processNormalizedWebhook } from "../webhooks/adapters.js";
 import { handleManualSend, type ManualSendOptions } from "./manual-send.js";
 import { env, buildProjectWebhookUrl } from "../config/env.js";
 
@@ -26,7 +26,7 @@ export function publicProject(db: Database.Database, project: Project) {
   const stats = db.prepare(`
     SELECT
       (SELECT COUNT(*) FROM customers WHERE project_id = @id) AS customers_count,
-      (SELECT COUNT(*) FROM orders WHERE project_id = @id) AS orders_count,
+      (SELECT COUNT(*) FROM orders WHERE project_id = @id AND is_test = 0) AS orders_count,
       (SELECT COUNT(*) FROM message_templates WHERE project_id = @id) AS templates_count,
       (SELECT COUNT(*) FROM funnel_triggers WHERE project_id = @id AND is_active = 1) AS active_automations,
       (SELECT COUNT(*) FROM message_queue WHERE project_id = @id AND status = 'SENT') AS sent_queue,
@@ -134,7 +134,7 @@ export function createProjectWorkspaceRouter(db: () => Database.Database, option
 
   router.get("/:projectId/orders", route((_req, res, repos, project) => {
     const orders = repos.db.prepare(`
-      SELECT o.id, o.transaction_id, o.product_id, o.offer_id, o.event_type, o.status, o.paid_at, o.created_at, c.name
+      SELECT o.id, o.transaction_id, o.product_id, o.offer_id, o.event_type, o.status, o.paid_at, o.created_at, o.is_test, c.name
       FROM orders o JOIN customers c ON c.id = o.customer_id AND c.project_id = o.project_id
       WHERE o.project_id = ? ORDER BY o.created_at DESC LIMIT 100
     `).all(project.id);
@@ -170,13 +170,141 @@ export function createProjectWorkspaceRouter(db: () => Database.Database, option
     const status = typeof req.query.status === "string" && req.query.status ? req.query.status : null;
     const jobs = repos.db.prepare(`
       SELECT q.id, CASE WHEN c.project_id = q.project_id THEN q.phone END AS phone,
-        q.message_type, q.scheduled_at, q.status, q.attempts, q.last_error, t.name AS automation
+        q.message_type, q.scheduled_at, q.status, q.attempts, q.last_error,
+        q.whatsapp_message_id, q.delivered_at, q.is_test, q.created_at, q.updated_at,
+        t.name AS automation, t.delay_seconds
       FROM message_queue q LEFT JOIN automation_executions e ON e.job_id = q.id
       LEFT JOIN funnel_triggers t ON t.id = e.trigger_id AND t.project_id = q.project_id
       LEFT JOIN customers c ON c.id = q.customer_id
       WHERE q.project_id = ? AND (? IS NULL OR q.status = ?) ORDER BY q.scheduled_at DESC LIMIT 100
     `).all(project.id, status, status);
     res.json({ jobs });
+  }));
+
+  router.post("/:projectId/test-dispatch", route(async (req, res, repos, project) => {
+    const { phone, name, email, event_type, offer_type, product_id, offer_id, amount, marketing_consent, fast_delay, authorized } = req.body ?? {};
+    if (!authorized) {
+      res.status(400).json({ error: "Confirme que o número informado foi expressamente autorizado para teste." });
+      return;
+    }
+    let cleanPhone: string;
+    try {
+      cleanPhone = sanitizePhone(phone);
+    } catch {
+      res.status(400).json({ error: "Informe um telefone válido com DDD (mínimo 10 dígitos)." });
+      return;
+    }
+
+    const event = String(event_type || "purchase_approved");
+    const rawOfferType = String(offer_type || "main").toLowerCase();
+    const isFast = fast_delay === true;
+    const prodId = String(product_id || project.cakto_product_id || "PROD_TEST");
+    const offId = String(offer_id || "OFF_TEST");
+    const txId = `TEST_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    const custName = String(name || "Usuário de Teste").trim();
+
+    // 1. Inserir em webhook_events com is_test = 1
+    const rawPayload = {
+      event,
+      data: {
+        id: txId,
+        status: event === "pix_generated" ? "waiting_payment" : event === "checkout_abandonment" ? "abandoned" : "paid",
+        offer_type: rawOfferType,
+        customer: { name: custName, phone: cleanPhone, email: email || null },
+        product: { id: prodId },
+        offer: { id: offId },
+        amount: typeof amount === "number" ? amount : 100,
+        pix: event === "pix_generated" ? { qr_code_text: "PIX_TESTE_DISPARO" } : undefined,
+      },
+      is_test: true,
+    };
+
+    const webhookEvent = repos.db.prepare(`
+      INSERT INTO webhook_events (project_id, event_type, product_id, transaction_id, authenticated, result, details, payload_json, is_test, created_at)
+      VALUES (?, ?, ?, ?, 1, 'TEST', 'Teste Real de Disparo autorizado', ?, 1, datetime('now'))
+      RETURNING *
+    `).get(project.id, event, prodId, txId, JSON.stringify(rawPayload)) as { id: number };
+
+    // 2. Permissão de marketing se selecionada
+    if (marketing_consent === true) {
+      repos.db.prepare(`
+        INSERT INTO contact_permissions (project_id, phone, marketing, opted_out) VALUES (?, ?, 1, 0)
+        ON CONFLICT(project_id, phone) DO UPDATE SET marketing = 1, opted_out = 0
+      `).run(project.id, cleanPhone);
+    }
+
+    // 3. Normalizar payload
+    const normalized = normalizeCaktoWebhook(rawPayload);
+
+    // 4. Processar webhook com is_test = 1 (não incrementa métricas financeiras de produção)
+    const { customer, order } = processNormalizedWebhook(normalized, repos, project.id, { isTest: true });
+
+    // 5. Agendar automações reais do projeto
+    const evaluations = scheduleProjectAutomations(repos, project, normalized, customer, order, false);
+
+    // 6. Se fast_delay estiver ativo, acelera jobs gerados para agora + 2 segundos
+    if (isFast) {
+      repos.db.prepare(`
+        UPDATE message_queue
+        SET scheduled_at = datetime('now', '+2 seconds'), updated_at = datetime('now')
+        WHERE project_id = ? AND customer_id = ? AND is_test = 1 AND status = 'PENDING'
+      `).run(project.id, customer.id);
+    }
+
+    const createdJobs = repos.db.prepare(`
+      SELECT q.id, q.message_type, q.scheduled_at, q.status, t.name AS automation, t.delay_seconds
+      FROM message_queue q
+      JOIN automation_executions e ON e.job_id = q.id
+      JOIN funnel_triggers t ON t.id = e.trigger_id
+      WHERE e.order_id = ?
+    `).all(order.id);
+
+    res.json({
+      success: true,
+      transaction_id: txId,
+      webhook_event_id: webhookEvent.id,
+      evaluations,
+      jobs: createdJobs,
+    });
+  }));
+
+  router.post("/:projectId/queue/cancel-test-jobs", route((_req, res, repos, project) => {
+    const cancelled = repos.messageQueue.cancelPendingTestJobs(project.id);
+    res.json({ success: true, cancelled_count: cancelled });
+  }));
+
+  router.get("/:projectId/queue/:jobId/timeline", route((req, res, repos, project) => {
+    const jobId = String(req.params.jobId);
+    const job = repos.db.prepare(`
+      SELECT q.*, c.name AS customer_name, t.name AS trigger_name, t.trigger_key,
+             t.delay_seconds, t.event_type AS trigger_event_type, m.name AS template_name,
+             m.content AS template_content, e.order_id
+      FROM message_queue q
+      LEFT JOIN customers c ON c.id = q.customer_id
+      LEFT JOIN automation_executions e ON e.job_id = q.id
+      LEFT JOIN funnel_triggers t ON t.id = e.trigger_id
+      LEFT JOIN message_templates m ON m.id = t.template_id
+      WHERE q.id = ? AND q.project_id = ?
+    `).get(jobId, project.id) as any;
+
+    if (!job) {
+      res.status(404).json({ error: "Mensagem não encontrada neste projeto." });
+      return;
+    }
+
+    const order = job.order_id ? repos.orders.findById(job.order_id) : null;
+    const webhookEvent = order ? repos.db.prepare(`
+      SELECT id, event_type, result, is_test, created_at
+      FROM webhook_events
+      WHERE project_id = ? AND (json_extract(payload_json, '$.data.id') = ? OR json_extract(payload_json, '$.data.transaction_id') = ?)
+      ORDER BY id DESC LIMIT 1
+    `).get(project.id, order.transaction_id, order.transaction_id) as any : null;
+
+    res.json({
+      job,
+      order,
+      webhook_event: webhookEvent ?? null,
+    });
   }));
 
   router.post("/:projectId/queue/:jobId/:action", route((req, res, repos, project) => {

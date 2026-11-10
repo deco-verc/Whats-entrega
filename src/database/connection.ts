@@ -189,6 +189,7 @@ export function applySchema(db: Database.Database): void {
   if (!needsProjectMigration) {
     db.exec(schemaSql);
     db.exec(PROJECT_WORKSPACE_SCHEMA);
+    ensureAdditionalColumns(db);
     return;
   }
 
@@ -226,10 +227,29 @@ export function applySchema(db: Database.Database): void {
         throw new Error("A migração de projetos falhou na verificação de integridade do SQLite.");
       }
       db.pragma("user_version = 1");
+      ensureAdditionalColumns(db);
     }).immediate();
   } finally {
     db.pragma("foreign_keys = ON");
   }
+}
+
+export function ensureAdditionalColumns(db: Database.Database): void {
+  const addCol = (table: string, col: string, def: string) => {
+    try {
+      const info = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+      if (info.length > 0 && !info.some((c) => c.name === col)) {
+        db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+      }
+    } catch {
+      // ignore
+    }
+  };
+  addCol("message_queue", "is_test", "INTEGER NOT NULL DEFAULT 0");
+  addCol("message_queue", "whatsapp_message_id", "TEXT");
+  addCol("message_queue", "delivered_at", "TEXT");
+  addCol("orders", "is_test", "INTEGER NOT NULL DEFAULT 0");
+  addCol("webhook_events", "is_test", "INTEGER NOT NULL DEFAULT 0");
 }
 
 function initializeProjectSchema(db: Database.Database, schemaSql: string): void {

@@ -118,6 +118,20 @@ dialog::backdrop { background: #050a15bc; }
 .notice { border: 1px solid var(--border); background: var(--bg-card); padding: 11px 13px; border-radius: 9px; color: var(--text-secondary); }
 .notice.error { border-color: #623344; color: #fecdd3; }
 #toast { position: fixed; z-index: 10; right: 20px; bottom: 20px; max-width: min(400px, calc(100% - 40px)); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; background: var(--bg-card); box-shadow: 0 8px 22px #0006; }
+
+.timeline { display: grid; gap: 0; position: relative; padding-left: 28px; margin: 12px 0; }
+.timeline::before { content: ""; position: absolute; left: 11px; top: 12px; bottom: 12px; width: 2px; background: var(--border); }
+.timeline-item { position: relative; padding-bottom: 20px; }
+.timeline-item:last-child { padding-bottom: 0; }
+.timeline-dot { position: absolute; left: -28px; top: 3px; width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--border); background: var(--bg-secondary); display: grid; place-items: center; font-size: 11px; color: var(--text-secondary); }
+.timeline-dot.good { border-color: #26534b; background: #12302d; color: #6ee7b7; }
+.timeline-dot.warn { border-color: #5c472c; background: #382918; color: #fcd38a; }
+.timeline-dot.bad { border-color: #623344; background: #3b2331; color: #fda4af; }
+.timeline-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.timeline-title { font-weight: 650; font-size: .92rem; }
+.timeline-time { font-size: .8rem; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.timeline-desc { font-size: .85rem; color: var(--text-secondary); }
+.timeline-error { margin-top: 5px; padding: 6px 10px; background: #3b2331; border: 1px solid #623344; border-radius: 6px; color: #fda4af; font-size: .8rem; }
 #toast[data-error="true"] { color: #fecdd3; }
 .skeleton { height: 180px; border-radius: var(--radius); background: linear-gradient(110deg, var(--bg-secondary) 15%, var(--bg-card) 48%, var(--bg-secondary) 80%); background-size: 210% 100%; animation: loading 1.4s linear infinite; }
 @keyframes loading { to { background-position: -210% 0; } }

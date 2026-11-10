@@ -12,6 +12,7 @@ import makeWASocket, {
 import { Boom } from "@hapi/boom";
 import pino from "pino";
 import { env, ensureDataDirectoriesExist } from "../config/env.js";
+import { messageQueueRepository } from "../database/repositories.js";
 
 /**
  * Ciclo de vida da conexao WhatsApp Baileys
@@ -377,6 +378,38 @@ export class WhatsAppSocketManager {
             await handler(inboundMessage, sock);
           } catch (handlerError) {
             console.error("[WhatsApp] Erro no handler de mensagem recebida:", handlerError);
+          }
+        }
+      }
+    });
+
+    // Escuta atualizacoes de status de mensagens enviadas (entrega / leitura)
+    sock.ev.on("messages.update", async (updates) => {
+      if (!updates || updates.length === 0) return;
+      for (const update of updates) {
+        const msgId = update.key?.id;
+        const statusNum = typeof update.update?.status === "number" ? update.update.status : undefined;
+        // status 3 = DELIVERY_ACK, 4 = READ, 5 = PLAYED
+        if (msgId && statusNum !== undefined && statusNum >= 3) {
+          try {
+            messageQueueRepository.markAsDelivered(msgId);
+          } catch {
+            // Ignora falha de banco concorrente
+          }
+        }
+      }
+    });
+
+    // Escuta recibos de entrega
+    sock.ev.on("message-receipt.update", async (receipts) => {
+      if (!receipts || receipts.length === 0) return;
+      for (const receipt of receipts) {
+        const msgId = receipt.key?.id;
+        if (msgId && receipt.receipt?.receiptTimestamp) {
+          try {
+            messageQueueRepository.markAsDelivered(msgId);
+          } catch {
+            // Ignora falha de banco concorrente
           }
         }
       }

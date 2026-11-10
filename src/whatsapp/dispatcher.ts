@@ -248,7 +248,8 @@ export async function simulateTypingPresence(
   jid: string,
   options?: DispatchOptions
 ): Promise<number> {
-  if (options?.skipPresenceSimulation) return 0;
+  if (options?.skipPresenceSimulation || !sock) return 0;
+  if ("user" in sock && !(sock as any).user) return 0;
 
   const min = options?.minComposingMs ?? 2500;
   const max = options?.maxComposingMs ?? 5000;
@@ -274,7 +275,8 @@ export async function simulateRecordingPresence(
   jid: string,
   options?: DispatchOptions
 ): Promise<number> {
-  if (options?.skipPresenceSimulation) return 0;
+  if (options?.skipPresenceSimulation || !sock) return 0;
+  if ("user" in sock && !(sock as any).user) return 0;
 
   const min = options?.minRecordingMs ?? 4000;
   const max = options?.maxRecordingMs ?? 7000;

@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS webhook_events (
   result TEXT NOT NULL,
   details TEXT,
   payload_json TEXT,
+  is_test INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_webhook_events_project ON webhook_events(project_id, id DESC);

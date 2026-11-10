@@ -71,6 +71,7 @@ export interface Order {
   readonly status: string;
   readonly paid_at: string | null;
   readonly raw_payload: string;
+  readonly is_test?: number;
   readonly created_at: string;
 }
 
@@ -85,6 +86,7 @@ export interface CreateOrderInput {
   readonly status: string;
   readonly paid_at?: string | null;
   readonly raw_payload: string | Record<string, unknown>;
+  readonly is_test?: number;
 }
 
 export type QueueMessageStatus = "PENDING" | "PROCESSING" | "SENT" | "FAILED" | "CANCELLED";
@@ -102,6 +104,9 @@ export interface QueueJob {
   readonly status: QueueMessageStatus;
   readonly attempts: number;
   readonly last_error: string | null;
+  readonly whatsapp_message_id?: string | null;
+  readonly delivered_at?: string | null;
+  readonly is_test?: number;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -117,6 +122,8 @@ export interface EnqueueJobInput {
   readonly media_path?: string | null;
   readonly scheduled_at: string | Date;
   readonly status?: QueueMessageStatus;
+  readonly whatsapp_message_id?: string | null;
+  readonly is_test?: number;
 }
 
 export interface AuditLog {
@@ -393,7 +400,7 @@ export class OrderRepository {
   private readonly stmtListByTransaction: Database.Statement<[string, string]>;
   private readonly stmtListAll: Database.Statement<[number, number]>;
   private readonly stmtCount: Database.Statement<[]>;
-  private readonly stmtInsert: Database.Statement<[string, string, string, string, string, string, string, string | null, string, string]>;
+  private readonly stmtInsert: Database.Statement<[string, string, string, string, string, string, string, string | null, string, string, number]>;
 
   constructor(db: Database.Database = getDatabase()) {
     this.db = db;
@@ -410,13 +417,13 @@ export class OrderRepository {
     this.stmtListAll = db.prepare<[number, number]>(`
       SELECT * FROM orders ORDER BY created_at DESC LIMIT ? OFFSET ?
     `);
-    this.stmtCount = db.prepare<[]>(`SELECT COUNT(*) as total FROM orders`);
-    this.stmtInsert = db.prepare<[string, string, string, string, string, string, string, string | null, string, string]>(`
+    this.stmtCount = db.prepare<[]>(`SELECT COUNT(*) as total FROM orders WHERE is_test = 0`);
+    this.stmtInsert = db.prepare<[string, string, string, string, string, string, string, string | null, string, string, number]>(`
       INSERT INTO orders (
         id, transaction_id, customer_id, product_id, offer_id,
-        event_type, status, paid_at, raw_payload, created_at, project_id
+        event_type, status, paid_at, raw_payload, created_at, project_id, is_test
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)
       RETURNING *
     `);
   }
@@ -450,7 +457,8 @@ export class OrderRepository {
       input.status.trim(),
       paidAt,
       payload,
-      projectId
+      projectId,
+      input.is_test ?? 0
     ) as Order;
 
     return created;
@@ -498,7 +506,7 @@ export class OrderRepository {
 
   public count(projectId?: string): number {
     if (projectId) {
-      const row = this.db.prepare("SELECT COUNT(*) as total FROM orders WHERE project_id = ?").get(projectId) as { total: number } | undefined;
+      const row = this.db.prepare("SELECT COUNT(*) as total FROM orders WHERE project_id = ? AND is_test = 0").get(projectId) as { total: number } | undefined;
       return row?.total ?? 0;
     }
     const row = this.stmtCount.get() as { total: number } | undefined;
@@ -524,7 +532,7 @@ export class MessageQueueRepository {
   private readonly stmtFindById: Database.Statement<[string]>;
   private readonly stmtFindDueJobs: Database.Statement<[string, number]>;
   private readonly stmtFindNextDue: Database.Statement<[string]>;
-  private readonly stmtInsert: Database.Statement<[string, string, string, string | null, string, string, string | null, string, string, string]>;
+  private readonly stmtInsert: Database.Statement<[string, string, string, string | null, string, string, string | null, string, string, string, number]>;
   private readonly stmtMarkProcessing: Database.Statement<[string]>;
   private readonly stmtMarkSent: Database.Statement<[string]>;
   private readonly stmtMarkFailedTerminal: Database.Statement<[string, string]>;
@@ -558,12 +566,12 @@ export class MessageQueueRepository {
       ORDER BY scheduled_at ASC
       LIMIT 1
     `);
-    this.stmtInsert = db.prepare<[string, string, string, string | null, string, string, string | null, string, string, string]>(`
+    this.stmtInsert = db.prepare<[string, string, string, string | null, string, string, string | null, string, string, string, number]>(`
       INSERT INTO message_queue (
         id, customer_id, phone, jid, message_type, content, media_path,
-        scheduled_at, status, attempts, last_error, created_at, updated_at, project_id
+        scheduled_at, status, attempts, last_error, created_at, updated_at, project_id, is_test
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, datetime('now'), datetime('now'), ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, datetime('now'), datetime('now'), ?, ?)
       RETURNING *
     `);
     this.stmtMarkProcessing = db.prepare<[string]>(`
@@ -673,7 +681,8 @@ export class MessageQueueRepository {
       input.media_path?.trim() ?? null,
       scheduledAt,
       status,
-      projectId
+      projectId,
+      input.is_test ?? 0
     ) as QueueJob;
 
     return job;
@@ -718,9 +727,39 @@ export class MessageQueueRepository {
     return res.changes > 0;
   }
 
-  public markAsSent(id: string): boolean {
+  public markAsSent(id: string, whatsappMessageId?: string | null): boolean {
+    if (whatsappMessageId) {
+      const res = this.db.prepare(`
+        UPDATE message_queue
+        SET status = 'SENT',
+            whatsapp_message_id = ?,
+            updated_at = datetime('now')
+        WHERE id = ?
+      `).run(whatsappMessageId, id);
+      return res.changes > 0;
+    }
     const res = this.stmtMarkSent.run(id);
     return res.changes > 0;
+  }
+
+  public markAsDelivered(idOrMessageId: string): boolean {
+    const res = this.db.prepare(`
+      UPDATE message_queue
+      SET delivered_at = datetime('now'),
+          updated_at = datetime('now')
+      WHERE (id = ? OR whatsapp_message_id = ?) AND delivered_at IS NULL
+    `).run(idOrMessageId, idOrMessageId);
+    return res.changes > 0;
+  }
+
+  public cancelPendingTestJobs(projectId: string): number {
+    const res = this.db.prepare(`
+      UPDATE message_queue
+      SET status = 'CANCELLED',
+          updated_at = datetime('now')
+      WHERE project_id = ? AND is_test = 1 AND status = 'PENDING'
+    `).run(projectId);
+    return res.changes;
   }
 
   public markAsFailed(
