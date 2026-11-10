@@ -242,3 +242,131 @@ test("projetos isolam regras, webhook, simulação, fila e autorização adminis
     db.close();
   }
 });
+
+test("abandono de checkout dispara apenas sua regra especifica e nao o pix gerado", async () => {
+  const db = createDatabaseConnection(":memory:");
+  const repos = createRepositories(db);
+  const server = createServer(createWebhookApp({
+    repositories: { customerRepo: repos.customers, orderRepo: repos.orders, auditRepo: repos.auditLogs, templateRepo: repos.templates },
+    adminCredentials: { username: "operator", password: "local-test" }, secret: "global-test",
+  }));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const origin = `http://127.0.0.1:${address.port}`;
+  const admin = "Basic " + Buffer.from("operator:local-test").toString("base64");
+
+  const request = async (route: string, method = "GET", data?: unknown) => {
+    const response = await fetch(origin + "/api" + route, {
+      method, headers: { Authorization: admin, "Content-Type": "application/json" },
+      body: data === undefined ? undefined : JSON.stringify(data),
+    });
+    return { status: response.status, body: await response.json() as any };
+  };
+
+  const webhook = async (slug: string, secret: string, bodyObj: object) => {
+    const body = JSON.stringify(bodyObj, null, 2);
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const signature = "v1=" + createHmac("sha256", secret).update(timestamp + "." + body).digest("hex");
+    return fetch(origin + "/api/webhook/cakto/" + slug, {
+      method: "POST", headers: { "Content-Type": "application/json", "X-Cakto-Timestamp": timestamp, "X-Cakto-Signature": signature }, body,
+    });
+  };
+
+  try {
+    const project = (await request("/projects", "POST", {
+      name: "Teste Abandono", slug: "teste-abandono", cakto_product_id: "prod-ab", cakto_webhook_secret: "secret-ab", is_active: 0,
+    })).body.project;
+
+    // Cria templates para Abandono e para Pix
+    const tplAbandono = (await request(`/projects/${project.id}/templates`, "POST", {
+      name: "Template Abandono", content: "Ola {primeiro_nome}, finalize seu pedido: {link_checkout}", category: "Recuperação", message_type: "TEXT", missing_policy: "omit",
+    })).body.template;
+
+    const tplPix = (await request(`/projects/${project.id}/templates`, "POST", {
+      name: "Template Pix", content: "Ola {primeiro_nome}, segue o pix: {pix_code}", category: "Pix", message_type: "TEXT", missing_policy: "omit",
+    })).body.template;
+
+    // Regra 1: Abandono de Checkout (checkout_abandonment)
+    (await request(`/projects/${project.id}/triggers`, "POST", {
+      name: "Regra Abandono", event_type: "checkout_abandonment", delay_seconds: 600, is_active: 1, template_id: tplAbandono.id,
+    }));
+
+    // Regra 2: Pix Gerado (pix_generated)
+    (await request(`/projects/${project.id}/triggers`, "POST", {
+      name: "Regra Pix", event_type: "pix_generated", delay_seconds: 420, is_active: 1, template_id: tplPix.id,
+    }));
+
+    // Simula abandono antes de ativar para satisfazer o onboarding check
+    const simRes = await request("/simulator/cakto", "POST", {
+      project_id: project.id, event: "checkout_abandonment", name: "Simulacao", phone: "5511999990000", product_id: "prod-ab",
+    });
+    assert.equal(simRes.status, 200);
+    assert.equal(simRes.body.approved, true);
+    const activateRes = await request(`/projects/${project.id}`, "PUT", { is_active: 1 });
+    assert.equal(activateRes.status, 200);
+
+    // 1. Envia evento de Abandono de Checkout da Cakto
+    const resAbandono = await webhook("teste-abandono", "secret-ab", {
+      event: "checkout_abandonment",
+      data: {
+        customerCellphone: "5511999991111",
+        customerName: "Joao Abandono",
+        customerEmail: "joao@teste.com",
+        createdAt: "2026-11-10T15:00:00Z",
+        product: { id: "prod-ab" },
+        offer: { id: "off-ab" },
+      },
+    });
+    assert.equal(resAbandono.status, 200);
+
+    // Verifica que APENAS a regra de abandono foi enfileirada e NAO o pix
+    const queueAfterAbandono = (await request(`/projects/${project.id}/queue`)).body.jobs;
+    assert.equal(queueAfterAbandono.length, 1);
+    assert.equal(queueAfterAbandono[0].automation, "Regra Abandono");
+    assert.equal(queueAfterAbandono[0].message_type, "TEXT");
+
+    // 2. Agora envia evento de Pix Gerado
+    const resPix = await webhook("teste-abandono", "secret-ab", {
+      event: "pix_generated",
+      data: {
+        id: "tx-pix-123",
+        status: "waiting_payment",
+        customer: { name: "Maria Pix", phone: "5511999992222" },
+        product: { id: "prod-ab" },
+        pix: { qr_code_text: "00020126...PIX" },
+      },
+    });
+    assert.equal(resPix.status, 200);
+
+    // Verifica que agora foram enfileirados 2 jobs: o de abandono do Joao e o de pix da Maria
+    const queueAfterPix = (await request(`/projects/${project.id}/queue`)).body.jobs;
+    assert.equal(queueAfterPix.length, 2);
+    const pixJob = queueAfterPix.find((j: any) => j.phone === "5511999992222");
+    assert.ok(pixJob);
+    assert.equal(pixJob.automation, "Regra Pix");
+
+    // 3. Agora o cliente do abandono conclui a compra (purchase_approved)
+    const resPaid = await webhook("teste-abandono", "secret-ab", {
+      event: "purchase_approved",
+      data: {
+        id: "tx-paid-123", status: "paid", offer_type: "main",
+        customer: { name: "Joao Abandono", phone: "5511999991111" },
+        product: { id: "prod-ab" }, offer: { id: "off-ab" }, amount: 97,
+      },
+    });
+    assert.equal(resPaid.status, 200);
+
+    // O worker de fila deve descartar/rejeitar o envio da mensagem de abandono porque a compra foi concluida
+    const abandonoJob = repos.messageQueue.findById(queueAfterAbandono[0].id);
+    assert.ok(abandonoJob);
+    const { checkQueuedAutomation } = await import("../src/engine/project-automations.js");
+    const ineligibilityReason = checkQueuedAutomation(
+      repos, abandonoJob, repos.customers.findById(abandonoJob.customer_id)!
+    );
+    assert.equal(ineligibilityReason, "O cliente concluiu a compra após o abandono.");
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    db.close();
+  }
+});

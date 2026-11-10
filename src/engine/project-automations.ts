@@ -204,6 +204,9 @@ export function checkQueuedAutomation(repos: Repositories, job: QueueJob, custom
   if (customer.current_state === "REFUNDED" && order.event_type !== "purchase_refunded" && order.event_type !== "chargeback") {
     return "Compra reembolsada.";
   }
+  if (order.event_type === "checkout_abandonment" && hasPurchase(repos.db, order)) {
+    return "O cliente concluiu a compra após o abandono.";
+  }
   if (order.event_type === "pix_generated" && repos.orders.findByTransactionAndEvent(order.transaction_id, "purchase_approved", job.project_id)) {
     return "O Pix já foi pago.";
   }

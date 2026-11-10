@@ -1380,10 +1380,9 @@ export class FunnelTriggerRepository {
       SELECT ft.*, mt.name as template_name, mt.content as template_content
       FROM funnel_triggers ft
       LEFT JOIN message_templates mt ON ft.template_id = mt.id AND mt.project_id = ft.project_id
-      WHERE ft.project_id = ? AND (ft.trigger_key = ? OR ft.trigger_key = CASE WHEN ? = 'PIX_RECOVERY' THEN 'ABANDONMENT_RECOVERY' WHEN ? = 'ABANDONMENT_RECOVERY' THEN 'PIX_RECOVERY' ELSE ? END)
-      ORDER BY ft.trigger_key = ? DESC
+      WHERE ft.project_id = ? AND ft.trigger_key = ?
       LIMIT 1
-    `).get(cleanProj, cleanKey, cleanKey, cleanKey, cleanKey, cleanKey) as FunnelTrigger | undefined;
+    `).get(cleanProj, cleanKey) as FunnelTrigger | undefined;
     return row ?? null;
   }
 

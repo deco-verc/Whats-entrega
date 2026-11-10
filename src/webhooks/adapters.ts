@@ -154,6 +154,19 @@ export function normalizeEventType(rawEvent: string | undefined | null, rawStatu
   }
 
   if (
+    event === "checkout_abandonment" ||
+    event === "checkout_abandoned" ||
+    event === "abandono_checkout" ||
+    event === "abandono" ||
+    event === "abandonment" ||
+    event === "cart_abandonment" ||
+    event === "abandoned_cart" ||
+    (!event && (status === "abandoned" || status === "checkout_abandonment"))
+  ) {
+    return "checkout_abandonment";
+  }
+
+  if (
     event === "pix_generated" ||
     event === "pix_gerado" ||
     event === "waiting_payment" ||
@@ -196,10 +209,19 @@ export function normalizeCaktoWebhook(rawBody: unknown): NormalizedCaktoPayload 
   const body = rawBody as Record<string, any>;
   const data = (body.data && typeof body.data === "object" ? body.data : body) as Record<string, any>;
 
+  // Extrai evento e status
+  const rawEvent = body.event || body.event_type || data.event || data.event_type;
+  const rawStatus = data.status || body.status || "";
+  const eventType = normalizeEventType(rawEvent, rawStatus);
+  const status = eventType === "checkout_abandonment" ? "ABANDONED" : String(rawStatus || eventType).toUpperCase();
+
   // Extrai identificador da transação
-  const abandonment = body.event === "checkout_abandonment";
-  const abandonmentKey = abandonment && data.offer?.id && data.createdAt && (data.customerEmail || data.customerCellphone)
-    ? "abandonment_" + crypto.createHash("sha256").update(JSON.stringify([data.customerEmail || data.customerCellphone, data.offer.id, data.createdAt])).digest("hex")
+  const abandonment = eventType === "checkout_abandonment";
+  const abandonmentEmailOrPhone = data.customerEmail || data.customerCellphone || data.customer?.phone || data.customer?.email || body.customer_phone || "";
+  const abandonmentOfferId = data.offer?.id || data.product?.id || body.product_id || "";
+  const abandonmentDate = data.createdAt || data.created_at || body.created_at || "";
+  const abandonmentKey = abandonment
+    ? "abandonment_" + crypto.createHash("sha256").update(JSON.stringify([abandonmentEmailOrPhone, abandonmentOfferId, abandonmentDate || Date.now()])).digest("hex")
     : "";
   const transactionId = String(
     data.id || data.transaction_id || body.id || body.transaction_id || abandonmentKey
@@ -209,17 +231,12 @@ export function normalizeCaktoWebhook(rawBody: unknown): NormalizedCaktoPayload 
     throw new Error("Invalid Cakto payload: transaction_id is required");
   }
 
-  // Extrai evento e status
-  const rawEvent = body.event || body.event_type || data.event || data.event_type;
-  const rawStatus = data.status || body.status || "";
-  const eventType = normalizeEventType(rawEvent, rawStatus);
-  const status = String(rawStatus || eventType).toUpperCase();
-
   // Extrai dados do cliente
   const rawCustomer = data.customer || body.customer || {};
-  const customerName = String(
-    rawCustomer.name || data.customerName || data.customer_name || body.customer_name || ""
+  const rawCustomerName = String(
+    rawCustomer.name || data.customerName || data.customer_name || body.customer_name || data.name || ""
   ).trim();
+  const customerName = rawCustomerName || (abandonment ? "Cliente" : "");
 
   if (!customerName) {
     throw new Error("Invalid Cakto payload: customer.name is required");
@@ -229,8 +246,12 @@ export function normalizeCaktoWebhook(rawBody: unknown): NormalizedCaktoPayload 
     rawCustomer.phone ||
     rawCustomer.cellphone ||
     data.customerCellphone ||
+    data.customerPhone ||
     data.customer_phone ||
+    data.phone ||
+    data.cellphone ||
     body.customer_phone ||
+    body.phone ||
     ""
   ).trim();
 

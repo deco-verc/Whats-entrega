@@ -21,10 +21,10 @@ const nav = [
 ];
 const gridIcon = "M3 5h7l2 2h9v13H3z";
 const eventLabels = {
-  purchase_approved: "Compra aprovada", purchase_refused: "Compra recusada", pix_generated: "Pix pendente",
+  purchase_approved: "Compra aprovada", purchase_refused: "Compra recusada", pix_generated: "Pix gerado (pagamento pendente)",
   pix_expirado: "Pix expirado", boleto_generated: "Boleto gerado", picpay_gerado: "PicPay gerado",
   purchase_refunded: "Reembolso", refund_requested: "Reembolso solicitado", chargeback: "Chargeback",
-  checkout_abandonment: "Carrinho abandonado", subscription_created: "Assinatura criada",
+  checkout_abandonment: "Abandono de Checkout", subscription_created: "Assinatura criada",
   subscription_renewed: "Assinatura renovada", subscription_canceled: "Assinatura cancelada",
   subscription_renewal_refused: "Renovação recusada",
   purchase_approved_upsell: "Upsell aprovado", purchase_approved_downsell: "Downsell aprovado",

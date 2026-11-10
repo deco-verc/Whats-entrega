@@ -27,6 +27,7 @@ import {
 import {
   validateCaktoSecret,
   normalizeCaktoWebhook,
+  normalizeEventType,
   sanitizePhone,
   validateCaktoSignature,
   type NormalizedCaktoPayload,
@@ -422,6 +423,7 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
     }
 
     const eventName = req.body?.event ?? req.body?.event_type;
+    const normalizedEventName = normalizeEventType(eventName);
     if (["test", "ping"].includes(eventName) ||
         (rawRecords.length > 0 && rawRecords.every((item) => item?.card && item?.pix && item?.boleto && item?.picpay))) {
       logWebhook(repos, project.id, true, "PROBE");
@@ -434,7 +436,7 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
       if (rawRecords.length === 0 || !eventName) throw new Error("Evento ausente.");
       if (isSigned && rawRecords.some((data) => !data || typeof data !== "object" ||
           typeof data.product?.id !== "string" ||
-          (eventName !== "checkout_abandonment" && (typeof data.id !== "string" || typeof data.status !== "string")))) {
+          (normalizedEventName !== "checkout_abandonment" && (typeof data.id !== "string" || typeof data.status !== "string")))) {
         throw new Error("Estrutura da entrega assinada inválida.");
       }
       events = rawRecords.map((data) => normalizeCaktoWebhook({ ...req.body, data }));
