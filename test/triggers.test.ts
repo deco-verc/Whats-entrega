@@ -17,6 +17,7 @@ describe("Gatilhos do Funil e Regras de Automacao (funnel_triggers)", () => {
   let baseUrl: string;
 
   beforeEach(async () => {
+    closeDatabase();
     process.env.DB_PATH = ":memory:";
     const db = getDatabase();
     repos = createRepositories(db);
