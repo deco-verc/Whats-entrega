@@ -1,5 +1,5 @@
 import type { NormalizedCaktoPayload, ProcessWebhookRepositories } from "./adapters.js";
-import { processNormalizedWebhook } from "./adapters.js";
+import { maskSensitivePayload, processNormalizedWebhook } from "./adapters.js";
 import type { Project, Repositories } from "../database/repositories.js";
 import { FunnelStateMachine } from "../engine/state-machine.js";
 import { scheduleProjectAutomations } from "../engine/project-automations.js";
@@ -40,20 +40,45 @@ export function processProjectEvent(
 }
 
 export function logWebhook(
-  repos: Repositories, projectId: string, authenticated: boolean, result: string,
-  event?: NormalizedCaktoPayload, details?: string
+  repos: Repositories,
+  projectId: string,
+  authenticated: boolean,
+  result: string,
+  event?: NormalizedCaktoPayload,
+  details?: string,
+  rawPayload?: unknown,
+  isTest = false
 ) {
-  const redacted = event && {
-    event: event.eventType,
-    data: {
-      id: event.transactionId, status: event.status, product: { id: event.product.id },
-      offer: { id: event.product.offerId }, offer_type: event.offerType, paidAt: event.paidAt,
-      customer: "[mascarado]",
-    },
-  };
-  repos.db.prepare(`
-    INSERT INTO webhook_events (project_id, authenticated, result, event_type, product_id, transaction_id, details, payload_json)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(projectId, Number(authenticated), result, event?.eventType ?? null, event?.product.id ?? null,
-    event?.transactionId ?? null, details ?? null, redacted ? JSON.stringify(redacted) : null);
+  const redacted = rawPayload
+    ? maskSensitivePayload(rawPayload)
+    : event
+    ? {
+        event: event.eventType,
+        data: {
+          id: event.transactionId,
+          status: event.status,
+          product: { id: event.product.id },
+          offer: { id: event.product.offerId },
+          offer_type: event.offerType,
+          paidAt: event.paidAt,
+          customer: "[mascarado]",
+        },
+      }
+    : null;
+  repos.db
+    .prepare(`
+    INSERT INTO webhook_events (project_id, authenticated, result, event_type, product_id, transaction_id, details, payload_json, is_test)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+    .run(
+      projectId,
+      Number(authenticated),
+      result,
+      event?.eventType ?? null,
+      event?.product.id ?? null,
+      event?.transactionId ?? null,
+      details ?? null,
+      redacted ? JSON.stringify(redacted) : null,
+      Number(isTest)
+    );
 }

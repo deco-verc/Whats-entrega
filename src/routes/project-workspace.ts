@@ -149,6 +149,171 @@ export function createProjectWorkspaceRouter(db: () => Database.Database, option
     res.json({ events, first_validated: verified ?? null, simulated_at: workspace?.simulated_at ?? null });
   }));
 
+  router.get("/:projectId/webhooks/:eventId", route((req, res, repos, project) => {
+    const eventId = Number(req.params.eventId);
+    const event = repos.db.prepare("SELECT * FROM webhook_events WHERE id = ? AND project_id = ?").get(eventId, project.id) as any;
+    if (!event) {
+      res.status(404).json({ error: "Evento de webhook não encontrado." });
+      return;
+    }
+    let payload = null;
+    if (event.payload_json) {
+      try { payload = JSON.parse(event.payload_json); } catch { payload = null; }
+    }
+    const matchingTriggers = repos.funnelTriggers.listByProject(project.id).filter((t) => t.is_active && t.event_type === event.event_type);
+    res.json({ event, payload, matched_automations: matchingTriggers.map((t) => t.name) });
+  }));
+
+  router.post("/:projectId/webhooks/:eventId/test", route(async (req, res, repos, project) => {
+    const eventId = Number(req.params.eventId);
+    const { mode = "simulate", phone, name, fast_delay, authorized, marketing_consent } = req.body ?? {};
+
+    const webhookEvent = repos.db.prepare(
+      "SELECT * FROM webhook_events WHERE id = ? AND project_id = ?"
+    ).get(eventId, project.id) as {
+      id: number; project_id: string; event_type: string | null; product_id: string | null;
+      transaction_id: string | null; authenticated: number; result: string; details: string | null;
+      payload_json: string | null; is_test: number; created_at: string;
+    } | undefined;
+
+    if (!webhookEvent) {
+      res.status(404).json({ error: "Evento de webhook não encontrado neste projeto." });
+      return;
+    }
+
+    let parsedPayload: Record<string, any> = {};
+    if (webhookEvent.payload_json) {
+      try { parsedPayload = JSON.parse(webhookEvent.payload_json); } catch { parsedPayload = {}; }
+    }
+
+    let normalized: any;
+    try {
+      normalized = normalizeCaktoWebhook(parsedPayload, { isTest: true });
+    } catch {
+      const txId = webhookEvent.transaction_id || `TEST_REPLAY_${randomUUID().replace(/-/g, "").slice(0, 10)}`;
+      const evtType = webhookEvent.event_type || "purchase_approved";
+      const prodId = webhookEvent.product_id || project.cakto_product_id || "PROD_TEST";
+      normalized = {
+        transactionId: txId.startsWith("TEST_") ? txId : `TEST_${txId}`,
+        eventType: evtType,
+        status: evtType === "checkout_abandonment" ? "ABANDONED" : evtType === "pix_generated" ? "WAITING_PAYMENT" : "PAID",
+        offerType: "main",
+        amount: 97,
+        currency: "BRL",
+        customer: {
+          name: typeof name === "string" && name.trim() ? name.trim() : "Usuário de Homologação",
+          phone: typeof phone === "string" && phone ? sanitizePhone(phone) : "5511999998888",
+          email: null,
+        },
+        product: { id: prodId, offerId: "OFF_TEST" },
+        rawPayload: parsedPayload,
+      };
+    }
+
+    if (mode === "simulate") {
+      const mockCustomer = {
+        id: "cust_sim_" + randomUUID(),
+        phone: normalized.customer.phone,
+        name: normalized.customer.name,
+        email: normalized.customer.email ?? null,
+        project_id: project.id,
+        current_state: "NEW",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      const mockOrder = {
+        id: "ord_sim_" + randomUUID(),
+        project_id: project.id,
+        customer_id: mockCustomer.id,
+        transaction_id: normalized.transactionId,
+        product_id: normalized.product.id,
+        offer_id: normalized.product.offerId,
+        event_type: normalized.eventType,
+        status: normalized.status,
+        paid_at: normalized.paidAt ?? null,
+        is_test: 1,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      const evaluations = scheduleProjectAutomations(repos, project, normalized, mockCustomer as any, mockOrder as any, true);
+
+      res.json({
+        success: true,
+        mode: "simulate",
+        webhook_event_id: webhookEvent.id,
+        transaction_id: normalized.transactionId,
+        event_type: normalized.eventType,
+        evaluations,
+      });
+      return;
+    }
+
+    if (mode === "dispatch") {
+      if (!authorized) {
+        res.status(400).json({ error: "Confirme que o número informado foi expressamente autorizado para teste." });
+        return;
+      }
+
+      let cleanPhone: string;
+      try {
+        cleanPhone = sanitizePhone(phone);
+      } catch {
+        res.status(400).json({ error: "Informe um telefone de teste válido com DDD (mínimo 10 dígitos)." });
+        return;
+      }
+
+      const testCustName = typeof name === "string" && name.trim() ? name.trim() : normalized.customer.name || "Usuário de Homologação";
+      const testNormalized = {
+        ...normalized,
+        transactionId: normalized.transactionId.startsWith("TEST_") ? normalized.transactionId : `TEST_${normalized.transactionId}`,
+        customer: {
+          ...normalized.customer,
+          name: testCustName,
+          phone: cleanPhone,
+        },
+      };
+
+      if (marketing_consent === true) {
+        repos.db.prepare(`
+          INSERT INTO contact_permissions (project_id, phone, marketing, opted_out) VALUES (?, ?, 1, 0)
+          ON CONFLICT(project_id, phone) DO UPDATE SET marketing = 1, opted_out = 0
+        `).run(project.id, cleanPhone);
+      }
+
+      const { customer, order } = processNormalizedWebhook(testNormalized, repos, project.id, { isTest: true });
+      const evaluations = scheduleProjectAutomations(repos, project, testNormalized, customer, order, false);
+
+      if (fast_delay === true) {
+        repos.db.prepare(`
+          UPDATE message_queue
+          SET scheduled_at = datetime('now', '+2 seconds'), updated_at = datetime('now')
+          WHERE project_id = ? AND customer_id = ? AND is_test = 1 AND status = 'PENDING'
+        `).run(project.id, customer.id);
+      }
+
+      const createdJobs = repos.db.prepare(`
+        SELECT q.id, q.message_type, q.scheduled_at, q.status, t.name AS automation, t.delay_seconds
+        FROM message_queue q
+        JOIN automation_executions e ON e.job_id = q.id
+        JOIN funnel_triggers t ON t.id = e.trigger_id
+        WHERE e.order_id = ?
+      `).all(order.id);
+
+      res.json({
+        success: true,
+        mode: "dispatch",
+        webhook_event_id: webhookEvent.id,
+        transaction_id: testNormalized.transactionId,
+        evaluations,
+        jobs: createdJobs,
+      });
+      return;
+    }
+
+    res.status(400).json({ error: "Modo de teste inválido. Escolha 'simulate' ou 'dispatch'." });
+  }));
+
   router.get("/:projectId/settings", route((_req, res, repos, project) => {
     res.json({ project: publicProject(repos.db, project) });
   }));

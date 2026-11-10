@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as http from "node:http";
 import { randomUUID } from "node:crypto";
+import type Database from "better-sqlite3";
 import express, { type Request, type Response, type NextFunction, type Application } from "express";
 import qrcode from "qrcode-generator";
 import { env, validatePort, buildProjectWebhookUrl } from "../config/env.js";
@@ -17,7 +18,7 @@ import { createProjectWorkspaceRouter } from "../routes/project-workspace.js";
 import { createTriggersRouter } from "../routes/triggers.js";
 import { protectAdministration } from "./admin-auth.js";
 import { linkedProducts, logWebhook, processProjectEvent } from "./project-events.js";
-import { AUTOMATION_EVENTS } from "../engine/project-automations.js";
+import { AUTOMATION_EVENTS, storedConditions } from "../engine/project-automations.js";
 import { TemplateRepository } from "../database/repositories.js";
 import {
   whatsappManager,
@@ -30,6 +31,7 @@ import {
   normalizeEventType,
   sanitizePhone,
   validateCaktoSignature,
+  classifyCaktoWebhook,
   type NormalizedCaktoPayload,
   type ProcessWebhookRepositories,
 } from "./adapters.js";
@@ -39,6 +41,7 @@ export interface WebhookServerOptions {
   readonly host?: string;
   readonly secret?: string;
   readonly repositories?: ProcessWebhookRepositories;
+  readonly database?: () => Database.Database;
   readonly publicDir?: string;
   readonly sock?: WASocket | null | (() => WASocket | null);
   readonly templateRepo?: TemplateRepository;
@@ -54,7 +57,7 @@ export interface WebhookServerOptions {
 export function createWebhookApp(options: WebhookServerOptions = {}): Application {
   const app = express();
   const publicDir = path.resolve(options.publicDir ?? "public");
-  const database = () => options.repositories?.customerRepo?.database ?? getDatabase();
+  const database = () => options.database?.() ?? options.repositories?.customerRepo?.database ?? getDatabase();
   app.use((_req: Request, res: Response, next: NextFunction) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("X-Frame-Options", "DENY");
@@ -410,28 +413,87 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
     const timestamp = req.get("X-Cakto-Timestamp");
     const secret = project.cakto_webhook_secret ?? (project.id === "default" ? options.secret ?? env.caktoWebhookSecret : "");
     const isSigned = Boolean(timestamp || signature?.startsWith("v1="));
-    const legacySecret = project.id === "default" ? (
-      signature || req.get("X-Cakto-Secret") || req.get("X-Webhook-Secret") ||
-      req.get("Authorization")?.match(/^Bearer (.+)$/)?.[1] || (!env.isProduction ? req.query.secret || req.query.token : undefined)
-    ) : undefined;
+    const providedSecret = signature || req.get("X-Cakto-Secret") || req.get("X-Webhook-Secret") ||
+      req.get("Authorization")?.match(/^Bearer (.+)$/)?.[1] || (!env.isProduction ? req.query.secret || req.query.token : undefined);
     const valid = isSigned
       ? validateCaktoSignature((req as Request & { rawBody?: Buffer }).rawBody, timestamp, signature, secret)
-      : (!signature || project.id === "default") && validateCaktoSecret(legacySecret ?? req.body?.secret, secret, signature ? req.body : undefined);
+      : validateCaktoSecret(providedSecret ?? req.body?.secret, secret, signature ? req.body : undefined);
     if (!valid) {
-      logWebhook(repos, project.id, false, "AUTH_FAILED");
+      logWebhook(repos, project.id, false, "AUTH_FAILED", undefined, "Segredo ou assinatura Cakto inválidos.", req.body, false);
       res.status(401).json({ error: "Segredo ou assinatura Cakto inválidos." });
       return;
     }
 
     const eventName = req.body?.event ?? req.body?.event_type;
     const normalizedEventName = normalizeEventType(eventName);
-    if (["test", "ping"].includes(eventName) ||
-        (rawRecords.length > 0 && rawRecords.every((item) => item?.card && item?.pix && item?.boleto && item?.picpay))) {
-      logWebhook(repos, project.id, true, "PROBE");
-      res.json({ success: true, probe: true, project_id: project.id });
+
+    // Se o payload tiver dados de transacao mas nenhum evento, rejeita como 400
+    if (!eventName && rawRecords.length > 0 && rawRecords.some((r) => r?.id || r?.transaction_id)) {
+      logWebhook(repos, project.id, true, "INVALID_PAYLOAD", undefined, "Evento ausente no payload.", req.body, false);
+      res.status(400).json({ error: "Payload Cakto inválido ou evento não suportado." });
       return;
     }
 
+    // Classificação estrita entre PROBE, TEST, AMBIGUOUS e PRODUCTION
+    const classification = classifyCaktoWebhook(req.body, rawRecords);
+
+    // A. PROBE DE CONECTIVIDADE
+    if (classification.category === "PROBE") {
+      logWebhook(repos, project.id, true, "PROBE", undefined, classification.reason, req.body, true);
+      res.json({ success: true, probe: true, project_id: project.id, message: "Probe de conectividade recebido com sucesso." });
+      return;
+    }
+
+    // B. EVENTO DE TESTE DA CAKTO
+    if (classification.category === "TEST") {
+      let normalizedTest: NormalizedCaktoPayload;
+      try {
+        normalizedTest = normalizeCaktoWebhook(req.body, { isTest: true });
+      } catch (err: any) {
+        logWebhook(repos, project.id, true, "TEST_FAILED", undefined, `Falha na normalização de teste: ${err?.message}`, req.body, true);
+        res.status(400).json({ error: "Estrutura do payload de teste inválida." });
+        return;
+      }
+
+      // Identifica automações ativas do projeto que seriam elegíveis
+      const matchingTriggers = repos.funnelTriggers.listByProject(project.id).filter((trigger) => {
+        if (!trigger.is_active) return false;
+        if (trigger.event_type !== normalizedTest.eventType) return false;
+        const conditions = storedConditions(repos.db, trigger.id);
+        if (conditions?.offer_type && conditions.offer_type.toLowerCase() !== (normalizedTest.offerType || "main").toLowerCase()) return false;
+        if (conditions?.status && conditions.status.toUpperCase() !== (normalizedTest.status || "").toUpperCase()) return false;
+        return true;
+      });
+      const matchedNames = matchingTriggers.map((t) => t.name);
+      const detailsMsg = `Evento de teste da Cakto. ${matchedNames.length} automação(ões) correspondente(s): ${matchedNames.join(", ") || "Nenhuma correspondente"}.`;
+
+      logWebhook(repos, project.id, true, "TEST", normalizedTest, detailsMsg, req.body, true);
+
+      res.status(200).json({
+        success: true,
+        test: true,
+        project_id: project.id,
+        event_type: normalizedTest.eventType,
+        transaction_id: normalizedTest.transactionId,
+        matched_automations: matchedNames,
+        message: "Evento de teste da Cakto recebido e registrado no Laboratório de Testes.",
+      });
+      return;
+    }
+
+    // Evento Ambíguo
+    if (classification.category === "AMBIGUOUS") {
+      logWebhook(repos, project.id, true, "AMBIGUOUS", undefined, classification.reason, req.body, true);
+      res.status(200).json({
+        success: true,
+        ambiguous: true,
+        project_id: project.id,
+        message: "Evento registrado para inspeção sem criação de pedido.",
+      });
+      return;
+    }
+
+    // C. EVENTO COMERCIAL REAL (PRODUÇÃO)
     let events: NormalizedCaktoPayload[] = [];
     try {
       if (rawRecords.length === 0 || !eventName) throw new Error("Evento ausente.");
@@ -440,7 +502,7 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
           (normalizedEventName !== "checkout_abandonment" && (typeof data.id !== "string" || typeof data.status !== "string")))) {
         throw new Error("Estrutura da entrega assinada inválida.");
       }
-      events = rawRecords.map((data) => normalizeCaktoWebhook({ ...req.body, data }));
+      events = rawRecords.map((data) => normalizeCaktoWebhook({ ...req.body, data }, { isTest: false }));
       for (const event of events) {
         if (!(AUTOMATION_EVENTS as readonly string[]).includes(event.eventType)) throw new Error("Evento Cakto não suportado.");
         if (event.eventType === "purchase_approved" && !["APPROVED", "PAID"].includes(event.status)) {
@@ -451,22 +513,22 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
         }
       }
     } catch {
-      logWebhook(repos, project.id, true, "INVALID_PAYLOAD", undefined, "Estrutura, evento ou dados de pagamento inválidos.");
+      logWebhook(repos, project.id, true, "INVALID_PAYLOAD", undefined, "Estrutura, evento ou dados de pagamento inválidos.", req.body, false);
       res.status(400).json({ error: "Payload Cakto inválido ou evento não suportado." });
       return;
     }
 
     const allowed = linkedProducts(repos, project);
     if ((project.id !== "default" || allowed.length > 0) && events.some((event) => !allowed.includes(event.product.id))) {
-      logWebhook(repos, project.id, true, "PRODUCT_MISMATCH", events.find((event) => !allowed.includes(event.product.id)));
+      logWebhook(repos, project.id, true, "PRODUCT_MISMATCH", events.find((event) => !allowed.includes(event.product.id)), "Produto sem vínculo com este projeto.", req.body, false);
       res.status(422).json({ error: "Produto sem vínculo com este projeto." });
       return;
     }
 
     try {
       const results = repos.db.transaction(() => events.map((event) => {
-        const result = processProjectEvent(repos, project, event, options.repositories);
-        logWebhook(repos, project.id, true, result.isDuplicate ? "DUPLICATE" : "PROCESSED", event);
+        const result = processProjectEvent(repos, project, event, options.repositories, false);
+        logWebhook(repos, project.id, true, result.isDuplicate ? "DUPLICATE" : "PROCESSED", event, undefined, req.body, false);
         return {
           success: true, transaction_id: event.transactionId, event_type: event.eventType, status: event.status,
           project_id: project.id, customer_id: result.customer.id, order_id: result.order.id,
@@ -478,7 +540,7 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
         processing_time_ms: Date.now() - started, processed_at: new Date().toISOString(),
       });
     } catch {
-      logWebhook(repos, project.id, true, "PROCESSING_ERROR", events[0]);
+      logWebhook(repos, project.id, true, "PROCESSING_ERROR", events[0], "Erro interno ao processar evento comercial.", req.body, false);
       res.status(500).json({ error: "Não foi possível processar o webhook." });
     }
   };

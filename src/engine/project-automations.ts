@@ -94,7 +94,7 @@ export function projectTemplateVariables(db: Database.Database, project: Project
   };
 }
 
-function storedConditions(db: Database.Database, triggerId: string): AutomationConditions | null {
+export function storedConditions(db: Database.Database, triggerId: string): AutomationConditions | null {
   const row = db.prepare("SELECT conditions_json FROM automation_conditions WHERE trigger_id = ?").get(triggerId) as { conditions_json: string } | undefined;
   return row ? JSON.parse(row.conditions_json) as AutomationConditions : null;
 }
@@ -184,7 +184,7 @@ export function scheduleProjectAutomations(
       ? renderProjectTemplate(repos, template, projectTemplateVariables(repos.db, project, customer.name, event))
       : undefined;
     reason ??= result ? result.error : "Template do projeto indisponível.";
-    if (!reason && result) {
+    if (!reason && result && !simulation) {
       const job = repos.messageQueue.enqueue({
         project_id: project.id,
         customer_id: customer.id,

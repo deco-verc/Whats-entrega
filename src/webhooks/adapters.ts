@@ -218,28 +218,178 @@ export function extractOfferType(data: Record<string, any>, body: Record<string,
     return lower;
   }
 
+  const offerName = String(data.offer?.name || body.offer?.name || "").toLowerCase();
+  const prodName = String(data.product?.name || body.product?.name || "").toLowerCase();
+  if (offerName.includes("upsell") || prodName.includes("upsell")) return "upsell";
+  if (offerName.includes("downsell") || prodName.includes("downsell")) return "downsell";
+  if (offerName.includes("bump") || prodName.includes("bump")) return "orderbump";
+
   if (data.is_orderbump || body.is_orderbump || data.is_bump || body.is_bump) return "orderbump";
   if (data.is_upsell || body.is_upsell) return "upsell";
 
   return "main";
 }
 
+export type CaktoEventClassification = "PROBE" | "TEST" | "PRODUCTION" | "AMBIGUOUS";
+
+export interface CaktoClassification {
+  readonly category: CaktoEventClassification;
+  readonly reason: string;
+  readonly isTest: boolean;
+  readonly isMultiMethod: boolean;
+}
+
+export function isCaktoTestPayload(body: Record<string, any>, data: Record<string, any>): boolean {
+  if (body.is_test === true || body.test === true || body.sandbox === true) return true;
+  if (data.is_test === true || data.test === true || data.sandbox === true) return true;
+  const rawEvt = String(body.event || body.event_type || data.event || data.event_type || "").trim().toLowerCase();
+  if (rawEvt === "test") return true;
+  if (Boolean(data.card && data.pix && data.boleto && data.picpay)) return true;
+  const id = String(data.id || data.transaction_id || body.id || body.transaction_id || "").toLowerCase();
+  if (id.startsWith("test_") || id.startsWith("test-") || id.includes("mock") || id.includes("sandbox")) return true;
+  return false;
+}
+
+export function classifyCaktoWebhook(rawBody: unknown, rawRecords?: Array<Record<string, any> | undefined>): CaktoClassification {
+  const body = (rawBody && typeof rawBody === "object" ? rawBody : {}) as Record<string, any>;
+  const records: Array<Record<string, any> | undefined> = rawRecords ?? (Array.isArray(body.data) ? body.data : [body.data ?? body]);
+  const rawEvent = String(body.event || body.event_type || records[0]?.event || records[0]?.event_type || "").trim().toLowerCase();
+
+  // 1. Verificacao de Conectividade (PROBE)
+  const isExplicitPing = rawEvent === "ping";
+  const hasNoRecords = records.length === 0;
+  const hasNoData = records.every((r) => !r || (
+    !r.id && !r.transaction_id && !r.product && !r.product_id &&
+    !r.customer && !r.customer_phone && !r.customerCellphone &&
+    !r.card && !r.pix && !r.boleto && !r.picpay
+  ));
+
+  if (isExplicitPing || hasNoRecords || (hasNoData && (rawEvent === "test" || !rawEvent))) {
+    return {
+      category: "PROBE",
+      reason: isExplicitPing ? "Ping de conectividade explícito." : "Verificação de conectividade sem dados de transação.",
+      isTest: true,
+      isMultiMethod: false,
+    };
+  }
+
+  // 2. Evento Oficial de Teste da Cakto (TEST)
+  const isMultiMethod = records.some((r) => Boolean(r?.card && r?.pix && r?.boleto && r?.picpay));
+  const hasTestFlag = Boolean(
+    body.is_test === true || body.test === true || body.sandbox === true ||
+    records.some((r) => r?.is_test === true || r?.test === true || r?.sandbox === true)
+  );
+  const isTestEventName = rawEvent === "test";
+  const hasTestTxId = records.some((r) => {
+    const id = String(r?.id || r?.transaction_id || "").toLowerCase();
+    return id.startsWith("test_") || id.startsWith("test-") || id.includes("mock") || id.includes("sandbox");
+  });
+
+  if (isMultiMethod || hasTestFlag || isTestEventName || hasTestTxId) {
+    return {
+      category: "TEST",
+      reason: isMultiMethod
+        ? "Payload oficial de teste da Cakto com múltiplos métodos de pagamento simulados."
+        : hasTestFlag
+        ? "Marcador explícito de teste presente no payload (is_test/sandbox)."
+        : isTestEventName
+        ? "Evento de teste identificado pelo nome do evento."
+        : "Identificador de transação com prefixo de teste.",
+      isTest: true,
+      isMultiMethod,
+    };
+  }
+
+  // 3. Verificacao de Integridade Comercial
+  const normalized = normalizeEventType(rawEvent);
+  const hasValidEvent = Boolean(rawEvent && normalized !== "unknown_event");
+  const hasTransaction = records.some((r) => Boolean(r?.id || r?.transaction_id));
+  const hasProduct = records.some((r) => Boolean(r?.product?.id || r?.product_id || body.product_id));
+  const hasCustomer = records.some((r) => Boolean(
+    r?.customer?.phone || r?.customerCellphone || r?.customerPhone || r?.phone ||
+    r?.customer?.email || r?.customerEmail || r?.email
+  ));
+
+  // Se nao tiver evento valido ou faltar transacao/produto/cliente, retem como AMBIGUOUS
+  if (!hasValidEvent || (!hasTransaction && !hasProduct && !hasCustomer)) {
+    return {
+      category: "AMBIGUOUS",
+      reason: !hasValidEvent
+        ? "Tipo de evento não identificado ou não suportado."
+        : "Ausência conjunta de dados de transação, produto e comprador.",
+      isTest: true,
+      isMultiMethod: false,
+    };
+  }
+
+  // 4. Evento Comercial Real (PRODUCTION)
+  return {
+    category: "PRODUCTION",
+    reason: "Evento comercial autêntico com dados de transação e comprador.",
+    isTest: false,
+    isMultiMethod: false,
+  };
+}
+
+export function maskSensitivePayload(input: unknown): Record<string, unknown> {
+  if (!input || typeof input !== "object") return {};
+  const copy = JSON.parse(JSON.stringify(input)) as Record<string, any>;
+
+  function sanitizeNode(node: any) {
+    if (!node || typeof node !== "object") return;
+    for (const key of Object.keys(node)) {
+      const lower = key.toLowerCase();
+      if (lower.includes("secret") || lower.includes("password") || lower === "cvv" || lower === "token" || lower === "signature") {
+        node[key] = "[REDACTED]";
+      } else if (lower === "card" && typeof node[key] === "object" && node[key] !== null) {
+        if (node[key].number) {
+          const num = String(node[key].number).replace(/\D/g, "");
+          node[key].number = num.length >= 4 ? `****${num.slice(-4)}` : "****";
+        }
+        if (node[key].cvv) node[key].cvv = "***";
+      } else if ((lower === "phone" || lower === "cellphone") && typeof node[key] === "string") {
+        const digits = node[key].replace(/\D/g, "");
+        if (digits.length >= 8) {
+          node[key] = `${digits.slice(0, 4)}****${digits.slice(-4)}`;
+        }
+      } else if (lower === "cpf" && typeof node[key] === "string") {
+        node[key] = "***.***.***-**";
+      } else if (typeof node[key] === "object") {
+        sanitizeNode(node[key]);
+      }
+    }
+  }
+
+  sanitizeNode(copy);
+  return copy;
+}
+
 /**
  * Normaliza o payload bruto da Cakto para o DTO limpo interno
  */
-export function normalizeCaktoWebhook(rawBody: unknown): NormalizedCaktoPayload {
+export function normalizeCaktoWebhook(
+  rawBody: unknown,
+  options: { isTest?: boolean; defaultProjectId?: string } = {}
+): NormalizedCaktoPayload {
   if (!rawBody || typeof rawBody !== "object" || Array.isArray(rawBody)) {
     throw new Error("Invalid Cakto payload: body must be a JSON object");
   }
 
   const body = rawBody as Record<string, any>;
   const data = (body.data && typeof body.data === "object" ? body.data : body) as Record<string, any>;
+  const isTest = options.isTest || isCaktoTestPayload(body, data);
 
   // Extrai evento e status
   const rawEvent = body.event || body.event_type || data.event || data.event_type;
   const rawStatus = data.status || body.status || "";
-  const eventType = normalizeEventType(rawEvent, rawStatus);
-  const status = eventType === "checkout_abandonment" ? "ABANDONED" : String(rawStatus || eventType).toUpperCase();
+  let eventType = normalizeEventType(rawEvent, rawStatus);
+  if (eventType === "unknown_event" && isTest) {
+    eventType = "purchase_approved";
+  }
+  const status = eventType === "checkout_abandonment" ? "ABANDONED"
+    : rawStatus ? String(rawStatus).toUpperCase()
+    : isTest ? "PAID"
+    : String(eventType).toUpperCase();
 
   // Extrai identificador da transação
   const abandonment = eventType === "checkout_abandonment";
@@ -249,26 +399,35 @@ export function normalizeCaktoWebhook(rawBody: unknown): NormalizedCaktoPayload 
   const abandonmentKey = abandonment
     ? "abandonment_" + crypto.createHash("sha256").update(JSON.stringify([abandonmentEmailOrPhone, abandonmentOfferId, abandonmentDate || Date.now()])).digest("hex")
     : "";
-  const transactionId = String(
+
+  let rawTxId = String(
     data.id || data.transaction_id || body.id || body.transaction_id || abandonmentKey
   ).trim();
 
-  if (!transactionId) {
+  if (!rawTxId && isTest) {
+    rawTxId = `TEST_CAKTO_${crypto.randomBytes(6).toString("hex")}`;
+  }
+
+  if (!rawTxId) {
     throw new Error("Invalid Cakto payload: transaction_id is required");
   }
+
+  const transactionId = isTest && !rawTxId.startsWith("TEST_") && !rawTxId.startsWith("test_")
+    ? `TEST_${rawTxId}`
+    : rawTxId;
 
   // Extrai dados do cliente
   const rawCustomer = data.customer || body.customer || {};
   const rawCustomerName = String(
     rawCustomer.name || data.customerName || data.customer_name || body.customer_name || data.name || ""
   ).trim();
-  const customerName = rawCustomerName || (abandonment ? "Cliente" : "");
+  const customerName = rawCustomerName || (abandonment ? "Cliente" : isTest ? "Cliente de Teste Cakto" : "");
 
   if (!customerName) {
     throw new Error("Invalid Cakto payload: customer.name is required");
   }
 
-  const rawPhone = String(
+  let rawPhone = String(
     rawCustomer.phone ||
     rawCustomer.cellphone ||
     data.customerCellphone ||
@@ -281,11 +440,25 @@ export function normalizeCaktoWebhook(rawBody: unknown): NormalizedCaktoPayload 
     ""
   ).trim();
 
+  if (!rawPhone && isTest) {
+    rawPhone = "5511999999999";
+  }
+
   if (!rawPhone) {
     throw new Error("Invalid Cakto payload: customer.phone is required");
   }
 
-  const customerPhone = sanitizePhone(rawPhone);
+  let customerPhone: string;
+  try {
+    customerPhone = sanitizePhone(rawPhone);
+  } catch (phoneErr) {
+    if (isTest) {
+      customerPhone = "5511999999999";
+    } else {
+      throw phoneErr;
+    }
+  }
+
   const customerEmail =
     rawCustomer.email || data.customerEmail || data.customer_email || body.customer_email
       ? String(rawCustomer.email || data.customerEmail || data.customer_email || body.customer_email).trim()
@@ -294,9 +467,13 @@ export function normalizeCaktoWebhook(rawBody: unknown): NormalizedCaktoPayload 
   // Extrai dados do produto e da oferta
   const rawProduct = data.product || body.product || {};
   const rawOffer = data.offer || body.offer || {};
-  const productId = String(
+  let productId = String(
     rawProduct.id || data.product_id || body.product_id || ""
   ).trim();
+
+  if (!productId && isTest) {
+    productId = "PROD_TEST";
+  }
 
   if (!productId) {
     throw new Error("Invalid Cakto payload: product.id is required");
@@ -322,6 +499,20 @@ export function normalizeCaktoWebhook(rawBody: unknown): NormalizedCaktoPayload 
     };
   }
 
+  // Extrai valor da transacao
+  let amount: number | undefined;
+  if (typeof data.amount === "number" && Number.isFinite(data.amount)) {
+    amount = data.amount;
+  } else if (typeof data.card?.amount === "number") {
+    amount = data.card.amount;
+  } else if (typeof data.pix?.amount === "number") {
+    amount = data.pix.amount;
+  } else if (typeof data.boleto?.amount === "number") {
+    amount = data.boleto.amount;
+  } else if (isTest) {
+    amount = 97;
+  }
+
   // Data de pagamento
   const paidAt = data.paidAt || data.paid_at || body.paid_at || null;
   const { secret: _secret, ...payload } = body;
@@ -332,8 +523,8 @@ export function normalizeCaktoWebhook(rawBody: unknown): NormalizedCaktoPayload 
     eventType,
     status,
     offerType: extractOfferType(data, body),
-    amount: typeof data.amount === "number" && Number.isFinite(data.amount) ? data.amount : undefined,
-    currency: typeof data.currency === "string" ? data.currency : undefined,
+    amount,
+    currency: typeof data.currency === "string" ? data.currency : "BRL",
     customer: {
       name: customerName,
       phone: customerPhone,

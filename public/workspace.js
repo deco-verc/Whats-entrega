@@ -34,7 +34,9 @@ const statusLabels = {
   CANCELLED: "Cancelada", PROCESSED: "Validado", DUPLICATE: "Duplicado", AUTH_FAILED: "Falha de autenticação",
   INVALID_PAYLOAD: "Payload inválido", PRODUCT_MISMATCH: "Produto incompatível", PROBE: "Teste de conectividade",
   PROCESSING_ERROR: "Erro de processamento", PAID: "Pago", APPROVED: "Aprovado", REFUSED: "Recusado",
-  SIMULATED: "Simulação concluída", NO_MATCH: "Sem agendamento", TEST: "Teste Real",
+  SIMULATED: "Simulação concluída", NO_MATCH: "Sem agendamento", TEST: "Teste Cakto",
+  PROCESSED: "Produção", AMBIGUOUS: "Ambíguo (Retido)", TEST_FAILED: "Falha de teste",
+  AUTH_FAILED: "Falha de autenticação", DUPLICATE: "Duplicado",
 };
 
 const jobStatus = (job) => {
@@ -531,8 +533,32 @@ function renderQueue(project, { jobs }) {
     ]), "Nenhuma mensagem neste filtro") + "</div>";
 }
 
-function renderLab(project, { diagnostics, templates }) {
+function renderLab(project, { diagnostics, templates, events = [] }) {
   const system = diagnostics.worker;
+  const caktoEvents = events.filter((e) => e.authenticated === 1 || e.result === "TEST" || e.result === "PROBE" || e.result === "PROCESSED" || e.result === "AMBIGUOUS");
+  const eventRows = caktoEvents.slice(0, 20).map((evt) => {
+    const authBadge = evt.authenticated ? badge("Válida", "good") : badge("Falhou", "bad");
+    let classBadge = "";
+    if (evt.result === "TEST") classBadge = badge("Teste Cakto", "warn");
+    else if (evt.result === "PROBE") classBadge = badge("Conectividade (Probe)", "");
+    else if (evt.result === "PROCESSED") classBadge = badge("Produção", "good");
+    else if (evt.result === "AMBIGUOUS") classBadge = badge("Ambíguo (Retido)", "warn");
+    else classBadge = badge(statusLabels[evt.result] || evt.result, "bad");
+
+    return [
+      h(date(evt.created_at)),
+      h(labelEvent(evt.event_type || "—")),
+      authBadge,
+      classBadge,
+      h(evt.product_id || "—"),
+      h(evt.details || "—"),
+      `<div class="row compact">
+        ${button("Testar automações", "test-webhook-event", "primary compact", evt.id)}
+        ${button("Ver payload", "view-webhook-payload", "compact", evt.id)}
+      </div>`,
+    ];
+  });
+
   main.innerHTML = heading(project.name, "Laboratório de Testes", "Valide as regras com simulação isolada ou execute disparos reais para números autorizados.") +
     `<div class="stack"><div class="grid">
       <section class="panel stack"><span class="tile">${icon(nav[3][2])}</span><h2>Testar mensagem</h2>
@@ -546,6 +572,18 @@ function renderLab(project, { diagnostics, templates }) {
         <p>Dispare para um número autorizado avaliando automações reais sem impactar vendas de produção.</p>
         <div>${button("Novo Teste Real", "test-dispatch-dialog", "primary")}</div></section>
     </div>
+
+    <section class="panel stack">
+      <div class="card-head">
+        <div>
+          <h2>Teste de Webhook Externo da Cakto</h2>
+          <p>Eventos enviados pela Cakto para a URL deste projeto. Verifique a autenticação e execute testes com payloads de exemplo ou eventos reais.</p>
+        </div>
+        ${button("Atualizar", "refresh")}
+      </div>
+      ${table(["Data / Hora", "Tipo Identificado", "Autenticação", "Classificação", "Produto", "Normalização / Detalhes", "Ações"], eventRows, "Nenhum webhook recebido da Cakto até o momento")}
+    </section>
+
     <section class="panel stack"><div class="card-head"><h2>Diagnóstico</h2>${button("Atualizar", "refresh")}</div>
     <div class="grid">
       <div><small>WhatsApp global</small>${badge(state.connection?.connected ? "Conectado" : "Desconectado", state.connection?.connected ? "good" : "warn")}</div>
@@ -617,6 +655,163 @@ function testDispatchDialog(project) {
     `;
     notify("Disparo de teste registrado.");
   });
+}
+
+async function testWebhookEventDialog(project, eventId) {
+  showDialog("Testar Automações com Evento Cakto", `<div class="stack" id="test-event-loading"><p class="muted">Carregando dados do evento...</p></div>`, true);
+  try {
+    const data = await api(endpoint(project, `webhooks/${encodeURIComponent(eventId)}`));
+    const { event, payload, matched_automations } = data;
+    const container = dialog.querySelector("#test-event-loading");
+    if (!container) return;
+
+    const matchedList = matched_automations && matched_automations.length ? matched_automations.join(", ") : "Nenhuma correspondente direta identificada";
+
+    container.outerHTML = `
+      <div class="stack">
+        <div class="notice">
+          <strong>Evento #${h(event.id)}:</strong> ${h(labelEvent(event.event_type || "Evento"))} · 
+          <strong>Resultado:</strong> ${h(event.result)} · 
+          <strong>Produto:</strong> <code>${h(event.product_id || "—")}</code><br>
+          <strong>Automações ativas elegíveis:</strong> ${h(matchedList)}
+        </div>
+
+        <div class="tabs-segmented" role="tablist" style="display:flex;gap:8px;margin-bottom:12px;">
+          <button type="button" class="button active" id="tab-btn-sim" style="flex:1;">Opção 1 — Simulação Isolada</button>
+          <button type="button" class="button" id="tab-btn-disp" style="flex:1;">Opção 2 — Teste com Envio Real</button>
+        </div>
+
+        <!-- Opcao 1: Simulacao -->
+        <div id="tab-sim-content" class="stack">
+          <p class="muted">Avalie as regras, templates e horários deste projeto sem realizar envios nem criar pedidos comerciais.</p>
+          <div class="dialog-actions">
+            <button type="button" class="button primary" id="btn-exec-simulate">Executar Simulação Isolada</button>
+          </div>
+        </div>
+
+        <!-- Opcao 2: Teste de Disparo Real -->
+        <div id="tab-disp-content" class="stack" style="display:none;">
+          <div class="notice">
+            Dispara as mensagens de teste <strong>exclusivamente para seu número autorizado</strong>.<br>
+            Os jobs serão marcados como <code>TEST</code> e <strong>não alteram vendas reais de produção</strong>.
+          </div>
+          <form id="form-webhook-dispatch" class="stack">
+            <div class="form-grid">
+              ${field("Seu WhatsApp para receber o teste", "phone", "", 'type="tel" required placeholder="5511999998888"')}
+              ${field("Nome do comprador de teste", "name", "Usuário Homologação", "required")}
+              ${select("Comportamento do Delay", "fast_delay", [["fast", "Disparo rápido (2s para homologação)"], ["real", "Respeitar delay real configurado"]], "fast")}
+            </div>
+            <div class="stack compact">
+              ${check("Declaro expressamente que este número de WhatsApp me pertence ou foi autorizado para este teste.", "authorized", false, 'required')}
+              ${check("Simular que o destinatário autorizou ofertas de marketing (upsell/downsell)", "marketing_consent", true)}
+            </div>
+            ${formError}
+            <div class="dialog-actions">
+              <button type="submit" class="button primary" id="btn-exec-dispatch">Executar Teste Autorizado</button>
+            </div>
+          </form>
+        </div>
+
+        <div id="webhook-test-result" class="stack" aria-live="polite"></div>
+      </div>
+    `;
+
+    const tabSimBtn = dialog.querySelector("#tab-btn-sim");
+    const tabDispBtn = dialog.querySelector("#tab-btn-disp");
+    const tabSimContent = dialog.querySelector("#tab-sim-content");
+    const tabDispContent = dialog.querySelector("#tab-disp-content");
+    const resultBox = dialog.querySelector("#webhook-test-result");
+
+    tabSimBtn.addEventListener("click", () => {
+      tabSimBtn.classList.add("active");
+      tabDispBtn.classList.remove("active");
+      tabSimContent.style.display = "block";
+      tabDispContent.style.display = "none";
+    });
+
+    tabDispBtn.addEventListener("click", () => {
+      tabDispBtn.classList.add("active");
+      tabSimBtn.classList.remove("active");
+      tabSimContent.style.display = "none";
+      tabDispContent.style.display = "block";
+    });
+
+    dialog.querySelector("#btn-exec-simulate").addEventListener("click", async () => {
+      resultBox.innerHTML = '<p class="muted">Executando simulação...</p>';
+      try {
+        const res = await api(endpoint(project, `webhooks/${encodeURIComponent(eventId)}/test`), "POST", { mode: "simulate" });
+        resultBox.innerHTML = `
+          <div class="notice" style="border-left: 3px solid #0ea5e9;">
+            <strong>Simulação concluída!</strong> Evento: <code>${h(res.event_type)}</code> · Transação simulada: <code>${h(res.transaction_id)}</code>
+          </div>
+          ${table(["Automação", "Template", "Espera", "Resultado"], res.evaluations.map((rule) => [
+            h(rule.name), h(rule.template || "—"), h(formatDelay(rule.delay_seconds)), h(rule.result)
+          ]), "Nenhuma regra avaliada")}
+        `;
+        notify("Simulação isolada concluída.");
+      } catch (err) {
+        resultBox.innerHTML = `<p class="notice error">${h(err.message)}</p>`;
+      }
+    });
+
+    bindForm(dialog.querySelector("#form-webhook-dispatch"), async ({ phone, name, fast_delay, authorized, marketing_consent }) => {
+      if (authorized !== "on") throw new Error("Confirme a autorização do número de telefone antes de disparar.");
+      resultBox.innerHTML = '<p class="muted">Agendando teste de disparo...</p>';
+      const res = await api(endpoint(project, `webhooks/${encodeURIComponent(eventId)}/test`), "POST", {
+        mode: "dispatch",
+        phone,
+        name,
+        fast_delay: fast_delay === "fast",
+        authorized: true,
+        marketing_consent: marketing_consent === "on",
+      });
+      const jobsCount = res.jobs ? res.jobs.length : 0;
+      resultBox.innerHTML = `
+        <div class="notice" style="border-left: 3px solid #22c55e;">
+          <strong>Teste autorizado registrado com sucesso!</strong><br>
+          Identificador: <code>${h(res.transaction_id)}</code><br>
+          Mensagens agendadas: <strong>${jobsCount}</strong><br>
+          ${fast_delay === "fast" ? "O worker do WhatsApp processará os disparos em poucos segundos." : "Os envios seguirão os delays configurados nas regras."}
+        </div>
+        ${table(["Automação", "Template", "Espera", "Resultado"], res.evaluations.map((rule) => [
+          h(rule.name), h(rule.template || "—"), h(formatDelay(rule.delay_seconds)), h(rule.result)
+        ]), "Nenhuma regra avaliada")}
+      `;
+      notify("Teste autorizado agendado na fila.");
+    });
+
+  } catch (err) {
+    const container = dialog.querySelector("#test-event-loading");
+    if (container) container.innerHTML = `<p class="notice error">Erro ao carregar evento: ${h(err.message)}</p>`;
+  }
+}
+
+async function viewWebhookPayloadDialog(project, eventId) {
+  showDialog(`Payload do Webhook #${eventId}`, `<div class="stack" id="view-payload-loading"><p class="muted">Carregando payload...</p></div>`, true);
+  try {
+    const data = await api(endpoint(project, `webhooks/${encodeURIComponent(eventId)}`));
+    const container = dialog.querySelector("#view-payload-loading");
+    if (!container) return;
+
+    const payloadStr = data.payload ? JSON.stringify(data.payload, null, 2) : "Nenhum payload registrado no banco.";
+    container.outerHTML = `
+      <div class="stack">
+        <div class="row" style="gap:16px;">
+          <div><small>Status</small><br>${badge(data.event.result, data.event.result === "PROCESSED" ? "good" : data.event.result === "TEST" ? "warn" : "")}</div>
+          <div><small>Autenticação</small><br>${data.event.authenticated ? badge("Aprovada", "good") : badge("Falhou", "bad")}</div>
+          <div><small>Evento</small><br><strong>${h(labelEvent(data.event.event_type || "—"))}</strong></div>
+          <div><small>Recebido em</small><br><strong>${h(date(data.event.created_at))}</strong></div>
+        </div>
+        <pre style="background:var(--bg-card);padding:12px;border-radius:6px;max-height:360px;overflow:auto;font-size:12px;border:1px solid var(--border);"><code>${h(payloadStr)}</code></pre>
+        <div class="dialog-actions">
+          ${button("Testar automações", "test-webhook-event", "primary", eventId)}
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    const container = dialog.querySelector("#view-payload-loading");
+    if (container) container.innerHTML = `<p class="notice error">Erro ao carregar payload: ${h(err.message)}</p>`;
+  }
 }
 
 async function jobTimelineDialog(project, jobId) {
@@ -901,8 +1096,12 @@ const pageData = {
   automations: (project) => api(endpoint(project, "triggers")),
   queue: (project) => api(endpoint(project, `queue?status=${encodeURIComponent(state.queueStatus)}`)),
   lab: async (project) => {
-    const [diagnostics, { templates }] = await Promise.all([api(endpoint(project, "diagnostics")), api(endpoint(project, "templates"))]);
-    return { diagnostics, templates };
+    const [diagnostics, { templates }, { events }] = await Promise.all([
+      api(endpoint(project, "diagnostics")),
+      api(endpoint(project, "templates")),
+      api(endpoint(project, "webhooks")),
+    ]);
+    return { diagnostics, templates, events: events || [] };
   },
   history: async (project) => {
     const [{ activity }, { events }] = await Promise.all([api(endpoint(project, "dashboard")), api(endpoint(project, "webhooks"))]);
@@ -1055,6 +1254,8 @@ async function runAction(target) {
       });
       break;
     case "timeline-job": await jobTimelineDialog(project, id); break;
+    case "test-webhook-event": await testWebhookEventDialog(project, id); break;
+    case "view-webhook-payload": await viewWebhookPayloadDialog(project, id); break;
     case "whatsapp-dialog": connectionDialog(); break;
     case "wa-reconnect":
     case "wa-disconnect":
