@@ -36,7 +36,7 @@ describe("Camada de Conexao SQLite em Modo WAL (connection.ts)", () => {
     assert.ok(schemaSql.includes("CREATE TABLE IF NOT EXISTS customers"));
     assert.ok(schemaSql.includes("CREATE TABLE IF NOT EXISTS orders"));
     assert.ok(schemaSql.includes("CREATE TABLE IF NOT EXISTS message_queue"));
-    assert.ok(schemaSql.includes("UNIQUE (transaction_id, event_type)"));
+    assert.ok(schemaSql.includes("UNIQUE (project_id, transaction_id, event_type)"));
     assert.ok(schemaSql.includes("idx_message_queue_scheduled_at"));
     assert.ok(schemaSql.includes("idx_message_queue_status"));
   });
@@ -253,7 +253,7 @@ describe("Repositorios Transacionais SQLite (repositories.ts)", () => {
             status: "approved",
             raw_payload: "{}",
           }),
-        /UNIQUE constraint failed: orders\.transaction_id, orders\.event_type/
+        /UNIQUE constraint failed: orders\.project_id, orders\.transaction_id, orders\.event_type/
       );
     });
 

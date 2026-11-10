@@ -27,6 +27,7 @@ import {
 
 import {
   validateCaktoSecret,
+  computeCaktoHmac,
   normalizeCaktoWebhook,
   normalizeEventType,
   sanitizePhone,
@@ -649,10 +650,13 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
           SELECT message_type, scheduled_at, content FROM message_queue WHERE project_id = ? AND rowid > ?
           ORDER BY scheduled_at
         `).all(project.id, last.id);
+        const simSecret = project.cakto_webhook_secret || (project.id === "default" ? options.secret || env.caktoWebhookSecret : "") || "cakto_secret";
+        const hmac_signature = computeCaktoHmac(normalized as unknown as Record<string, unknown>, simSecret);
         approved = jobs.length > 0;
         result = {
           simulated_event: type, transaction_id: id, product_id: productId, offer_id: simulatedOffer,
           evaluations: processed.evaluations, state_machine: processed.canonical, jobs,
+          hmac_signature,
         };
         throw rollback;
       }).immediate();

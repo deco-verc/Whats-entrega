@@ -81,14 +81,15 @@ describe("Simulador de Eventos Cakto (POST /api/simulator/cakto)", () => {
       assert.ok(data.transaction_id.startsWith("sim_tx_"));
       assert.ok(typeof data.hmac_signature === "string" && data.hmac_signature.length === 64);
 
-      // Valida persistência do cliente e do pedido no banco de teste
+      // Valida isolamento estrito: simulação é dry-run e não persiste dados no banco de produção
       const customer = custRepo.findByPhone("5511988887777");
-      assert.ok(customer);
-      assert.equal(customer?.name, "Carlos Teste Pix");
+      assert.equal(customer, null, "Simulação isolada não deve persistir cliente no banco");
 
       const order = ordRepo.findByTransactionAndEvent(data.transaction_id, "pix_generated");
-      assert.ok(order);
-      assert.equal(order?.status, "WAITING_PAYMENT");
+      assert.equal(order, null, "Simulação isolada não deve persistir pedido no banco");
+      assert.equal(data.approved, true);
+      assert.equal(data.sent, false);
+      assert.ok(Array.isArray(data.jobs) && data.jobs.length >= 1);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       db.close();
@@ -133,10 +134,12 @@ describe("Simulador de Eventos Cakto (POST /api/simulator/cakto)", () => {
       assert.equal(data.simulated_event, "purchase_approved");
       assert.equal(data.product_id, "prod_main_01");
 
-      // Valida cliente
+      // Valida isolamento estrito: simulação é dry-run e não persiste dados no banco de produção
       const customer = custRepo.findByPhone("5521977776666");
-      assert.ok(customer);
-      assert.equal(customer?.name, "Mariana Aluna");
+      assert.equal(customer, null, "Simulação isolada não deve persistir cliente no banco");
+      assert.equal(data.approved, true);
+      assert.equal(data.sent, false);
+      assert.ok(Array.isArray(data.jobs) && data.jobs.length >= 1);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       db.close();
