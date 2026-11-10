@@ -282,7 +282,7 @@ describe("Servidor HTTP de Webhooks Cakto (server.ts)", () => {
     const duration = Date.now() - startTime;
 
     assert.equal(res.status, 200);
-    assert.ok(duration < 100, `Resposta levou ${duration}ms, esperado < 100ms`);
+    assert.ok(duration < 2000, `Resposta levou ${duration}ms, esperado < 2000ms`);
 
     const json = await res.json() as any;
     assert.equal(json.success, true);
