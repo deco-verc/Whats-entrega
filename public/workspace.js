@@ -247,11 +247,38 @@ function webhookTable(events) {
       status(item.result), button("Ver", "webhook-detail", "", String(item.id))]), "Nenhum webhook recebido");
 }
 
+function validateWebhookConfig(url) {
+  if (!url || typeof url !== "string") {
+    return { valid: false, message: "URL do webhook não informada." };
+  }
+  try {
+    const parsed = new URL(url);
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      return { valid: false, message: "Protocolo inválido. Utilize HTTP ou HTTPS." };
+    }
+    const isBareIpv4 = /^(\d{1,3}\.){3}\d{1,3}$/.test(parsed.hostname);
+    const isBareIpv6 = parsed.hostname.includes(":") && !parsed.hostname.includes(".");
+    if (parsed.protocol === "https:" && (isBareIpv4 || isBareIpv6)) {
+      return {
+        valid: false,
+        message: "Configuração incorreta: IPs diretos com HTTPS causam erro de certificado SSL na Cakto. Utilize o domínio público FQDN configurado no PUBLIC_BASE_URL (ex: https://18.191.162.237.sslip.io).",
+      };
+    }
+    return { valid: true };
+  } catch {
+    return { valid: false, message: "Formato de URL inválido." };
+  }
+}
+
 function renderIntegration(project, data) {
-  const url = `${location.origin}/api/webhook/cakto/${encodeURIComponent(project.slug)}`;
+  const url = project.webhook_url || `${state.public_base_url || location.origin}/api/webhook/cakto/${encodeURIComponent(project.slug)}`;
+  const check = validateWebhookConfig(url);
+  const warningNotice = !check.valid ? `<div class="notice error" style="margin-bottom:14px;border-left:4px solid var(--danger, #ef4444);">
+    <strong>Configuração Incorreta de Webhook:</strong> ${h(check.message)}
+  </div>` : "";
   main.innerHTML = heading(project.name, "Integração Cakto", "Configure a URL e acompanhe os eventos validados para este produto.",
     button("Aguardar Evento Real", "monitor-webhook", "primary")) +
-    `<div class="stack"><section class="panel stack"><div class="card-head"><h2>Webhook do projeto</h2>
+    `<div class="stack">${warningNotice}<section class="panel stack"><div class="card-head"><h2>Webhook do projeto</h2>
       ${badge(data.first_validated ? "Evento real validado" : project.onboarding_checks[1] ? "Webhook configurado" : "Configuração pendente", data.first_validated ? "good" : "warn")}</div>
       <label class="field">URL exclusiva<input id="webhook-url" value="${h(url)}" readonly></label>
       <div class="row">${button("Copiar URL", "copy-webhook")}${button("Simular Webhook", "simulate-dialog")}</div>
@@ -498,8 +525,9 @@ function renderLab(project, { diagnostics, templates }) {
 }
 
 function simulationDialog(project) {
+  const targetWebhookUrl = project.webhook_url || `${state.public_base_url || location.origin}/api/webhook/cakto/${encodeURIComponent(project.slug)}`;
   showDialog("Simular evento Cakto", `<form class="stack">
-    <div class="notice">Simulação isolada. A prévia usa dados de teste e não envia mensagens.</div>
+    <div class="notice">Simulação isolada do endpoint: <code>${h(targetWebhookUrl)}</code>. A prévia usa dados de teste e não envia mensagens.</div>
     <div class="form-grid">
       ${select("Evento", "event", Object.entries(eventLabels), "purchase_approved")}
       ${field("Telefone fictício", "phone", "5511999990000", 'type="tel" required')}
@@ -515,7 +543,7 @@ function simulationDialog(project) {
       marketing_consent: marketing_consent === "on",
       ...(amount ? { amount: Number(amount) } : {}), ...(offer_id ? { offer_id } : {}) });
     dialog.querySelector("#simulation-result").innerHTML = `<div class="notice">${h(labelEvent(result.simulated_event))} · ${h(project.name)}
-      · ${result.jobs.length} mensagens simuladas</div>` +
+      · ${result.jobs.length} mensagens simuladas · Endpoint avaliado: <code>${h(result.simulated_webhook_url || targetWebhookUrl)}</code></div>` +
       table(["Automação", "Template", "Espera", "Resultado"], result.evaluations.map((rule) =>
         [h(rule.name), h(rule.template || "—"), h(formatDelay(rule.delay_seconds)), h(rule.result)]), "Nenhuma regra personalizada encontrada") +
       table(["Tipo", "Horário simulado", "Conteúdo"], result.jobs.map((job) => [h(job.message_type), h(date(job.scheduled_at)), h(job.content)]),
@@ -694,9 +722,10 @@ async function render() {
   main.setAttribute("aria-busy", "true");
   main.innerHTML = '<div class="skeleton" aria-label="Carregando dados do projeto"></div>';
   try {
-    const { projects } = await api("/api/projects");
+    const { projects, public_base_url } = await api("/api/projects");
     if (revision !== state.revision) return;
     state.projects = projects;
+    if (public_base_url) state.public_base_url = public_base_url;
     const match = location.hash.match(/^#project\/([^/]+)\/([a-z]+)$/);
     const project = match && projects.find((item) => encodeURIComponent(item.id) === match[1]);
     const view = project && Object.hasOwn(screens, match[2]) ? match[2] : "overview";
@@ -759,12 +788,19 @@ async function runAction(target) {
       break;
     case "copy-webhook": {
       const input = main.querySelector("#webhook-url");
+      const urlValue = input?.value || "";
+      const validation = validateWebhookConfig(urlValue);
+      if (!validation.valid) {
+        notify(validation.message, "error");
+        alert("Configuração de Webhook Incorreta:\n\n" + validation.message);
+        break;
+      }
       try {
-        await navigator.clipboard.writeText(input.value);
-        notify("URL copiada.");
+        await navigator.clipboard.writeText(urlValue);
+        notify("URL pública copiada com sucesso.");
       } catch {
         input.select();
-        notify("URL selecionada. Use o comando de copiar do seu dispositivo.");
+        notify("URL selecionada. Pressione Ctrl+C para copiar.");
       }
       break;
     }

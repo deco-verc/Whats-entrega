@@ -3,6 +3,7 @@ import type Database from "better-sqlite3";
 import { getDatabase } from "../database/connection.js";
 import { createRepositories } from "../database/repositories.js";
 import { parseProjectMetadata, publicProject, saveProjectMetadata, workspaceFor } from "./project-workspace.js";
+import { env } from "../config/env.js";
 
 export function createProjectsRouter(database: () => Database.Database = getDatabase): Router {
   const router = Router();
@@ -10,7 +11,11 @@ export function createProjectsRouter(database: () => Database.Database = getData
   router.get("/", (_req, res) => {
     const repos = createRepositories(database());
     const projects = repos.projects.listAll().filter((project) => !workspaceFor(repos.db, project.id)?.archived_at);
-    res.json({ success: true, projects: projects.map((project) => publicProject(repos.db, project)) });
+    res.json({
+      success: true,
+      public_base_url: env.publicBaseUrl,
+      projects: projects.map((project) => publicProject(repos.db, project)),
+    });
   });
 
   const save = (req: Request, res: Response): void => {

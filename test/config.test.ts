@@ -10,6 +10,9 @@ import {
   validateLogLevel,
   validateCaktoSecret,
   validatePairingPhone,
+  validatePublicBaseUrl,
+  buildProjectWebhookUrl,
+  isSecureWebhookUrl,
   validateEnvConfig,
 } from "../src/config/env.js";
 import {
@@ -84,6 +87,61 @@ describe("Configuracao Base e Variaveis de Ambiente (env.ts)", () => {
     assert.equal(validatePairingPhone("+55 (11) 99999-8888"), "5511999998888");
   });
 
+  test("deve validar e sanitizar PUBLIC_BASE_URL rejeitando IPs puros com HTTPS", () => {
+    assert.throws(
+      () => validatePublicBaseUrl("https://18.191.162.237"),
+      /Bare IP address "18.191.162.237" is not allowed with HTTPS protocol/
+    );
+    assert.throws(
+      () => validatePublicBaseUrl("not-a-valid-url"),
+      /is not a valid absolute URL/
+    );
+    assert.throws(
+      () => validatePublicBaseUrl("ftp://meudominio.com"),
+      /Protocol must be "http:" or "https:"/
+    );
+    assert.equal(
+      validatePublicBaseUrl("https://18.191.162.237.sslip.io/"),
+      "https://18.191.162.237.sslip.io"
+    );
+    assert.equal(
+      validatePublicBaseUrl("https://meuprojeto.com.br"),
+      "https://meuprojeto.com.br"
+    );
+    assert.equal(
+      validatePublicBaseUrl("http://localhost:4000"),
+      "http://localhost:4000"
+    );
+    assert.equal(
+      validatePublicBaseUrl("", true),
+      "https://18.191.162.237.sslip.io"
+    );
+    assert.equal(
+      validatePublicBaseUrl("", false),
+      "http://localhost:4000"
+    );
+  });
+
+  test("deve construir URLs publicas de webhook com base na configuracao canonica", () => {
+    const urlDefault = buildProjectWebhookUrl("default", "https://18.191.162.237.sslip.io");
+    assert.equal(urlDefault, "https://18.191.162.237.sslip.io/api/webhook/cakto/default");
+
+    const urlNatal = buildProjectWebhookUrl("natal-descomplicado", "https://18.191.162.237.sslip.io/");
+    assert.equal(urlNatal, "https://18.191.162.237.sslip.io/api/webhook/cakto/natal-descomplicado");
+  });
+
+  test("deve validar seguranca de URLs para deteccao de configuracoes incorretas", () => {
+    const checkBareIp = isSecureWebhookUrl("https://18.191.162.237/api/webhook/cakto/default");
+    assert.equal(checkBareIp.valid, false);
+    assert.ok(checkBareIp.reason?.includes("IPs diretos com HTTPS"));
+
+    const checkValid = isSecureWebhookUrl("https://18.191.162.237.sslip.io/api/webhook/cakto/default");
+    assert.equal(checkValid.valid, true);
+
+    const checkHttpLocal = isSecureWebhookUrl("http://localhost:4000/api/webhook/cakto/default");
+    assert.equal(checkHttpLocal.valid, true);
+  });
+
   test("deve garantir arquivo .env.example provisionado e documentando todas as variaveis", () => {
     assert.ok(fs.existsSync(".env.example"), ".env.example deve existir na raiz do projeto");
     const exampleContent = fs.readFileSync(".env.example", "utf-8");
@@ -92,6 +150,7 @@ describe("Configuracao Base e Variaveis de Ambiente (env.ts)", () => {
       "HOST",
       "NODE_ENV",
       "LOG_LEVEL",
+      "PUBLIC_BASE_URL",
       "CAKTO_WEBHOOK_SECRET",
       "WHATSAPP_PAIRING_PHONE",
       "DATA_DIR",

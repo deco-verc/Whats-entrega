@@ -4,7 +4,7 @@ import * as http from "node:http";
 import { randomUUID } from "node:crypto";
 import express, { type Request, type Response, type NextFunction, type Application } from "express";
 import qrcode from "qrcode-generator";
-import { env, validatePort } from "../config/env.js";
+import { env, validatePort, buildProjectWebhookUrl } from "../config/env.js";
 import { getDatabase } from "../database/connection.js";
 import { CATALOG } from "../config/catalog.js";
 import { FunnelStateMachine } from "../engine/state-machine.js";
@@ -129,6 +129,7 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
         connectedPhone: waConnection.connectedPhone,
       },
       port: options.port ?? (process.env.PORT ? Number(process.env.PORT) : env.port),
+      public_base_url: env.publicBaseUrl,
       stats: {
         total_customers: customersCount,
         total_orders: ordersCount,
@@ -489,6 +490,8 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
       status: "ok",
       message: "Cakto webhook endpoint is active and listening for events.",
       slug: slug || "default",
+      webhook_url: buildProjectWebhookUrl(slug, env.publicBaseUrl),
+      public_base_url: env.publicBaseUrl,
       timestamp: new Date().toISOString(),
     });
   };
@@ -604,7 +607,16 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
     repos.auditLogs.log("admin", "simulate_cakto", "projects", project.id, {
       event: type, scheduled: Array.isArray(result.jobs) ? result.jobs.length : 0, approved,
     });
-    res.json({ success: true, mode: "dry_run", ...result, project_id: project.id, sent: false, approved });
+    res.json({
+      success: true,
+      mode: "dry_run",
+      simulated_webhook_url: buildProjectWebhookUrl(project.slug, env.publicBaseUrl),
+      public_base_url: env.publicBaseUrl,
+      ...result,
+      project_id: project.id,
+      sent: false,
+      approved,
+    });
   });
   // Roteamento SPA e arquivos estáticos (Full-Stack Invariants)
   const serveSpaIndex = (_req: Request, res: Response) => {

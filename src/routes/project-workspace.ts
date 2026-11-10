@@ -7,7 +7,7 @@ import { createRepositories, type Project } from "../database/repositories.js";
 import { AUTOMATION_EVENTS, isLegacyAutomationKey, projectMediaPath, projectTemplateVariables, renderProjectTemplate } from "../engine/project-automations.js";
 import { sanitizePhone } from "../webhooks/adapters.js";
 import { handleManualSend, type ManualSendOptions } from "./manual-send.js";
-import { env } from "../config/env.js";
+import { env, buildProjectWebhookUrl } from "../config/env.js";
 
 type Workspace = {
   product_name: string | null; timezone: string; links_json: string; additional_products_json: string;
@@ -36,6 +36,8 @@ export function publicProject(db: Database.Database, project: Project) {
   `).get({ id: project.id }) as Record<string, number>;
   return {
     ...publicFields, secret_configured: Boolean(cakto_webhook_secret), last_webhook: lastWebhook ?? null, stats,
+    webhook_url: buildProjectWebhookUrl(project.slug, env.publicBaseUrl),
+    public_base_url: env.publicBaseUrl,
     integration_verified: Boolean(db.prepare("SELECT 1 FROM webhook_events WHERE project_id = ? AND id > ? AND result = 'PROCESSED' LIMIT 1")
       .get(project.id, workspace?.integration_after_id ?? 0)),
     product_name: workspace?.product_name ?? project.name,

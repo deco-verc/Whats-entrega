@@ -125,6 +125,8 @@ test("projetos isolam regras, webhook, simulação, fila e autorização adminis
     assert.equal(first.secret_configured, true);
     assert.equal(first.cakto_webhook_secret, undefined);
     assert.equal(first.is_active, 0);
+    assert.ok(typeof first.webhook_url === "string" && first.webhook_url.includes("/api/webhook/cakto/natal"));
+    assert.ok(typeof first.public_base_url === "string");
     const root = "/projects/" + first.id;
     const other = "/projects/" + second.id;
     assert.equal((await request(root, "PUT", { timezone: "America/Fortaleza", links: { link_acesso: "https://example.com/acesso" } })).body.project.timezone, "America/Fortaleza");
@@ -160,6 +162,7 @@ test("projetos isolam regras, webhook, simulação, fila e autorização adminis
     assert.equal(simulation.status, 200);
     assert.equal(simulation.body.approved, true);
     assert.equal(simulation.body.sent, false);
+    assert.ok(typeof simulation.body.simulated_webhook_url === "string" && simulation.body.simulated_webhook_url.includes("/api/webhook/cakto/natal"));
     assert.equal(simulation.body.jobs.length, 2);
     assert.equal(repos.orders.count(first.id), 0);
     assert.equal(repos.customers.count(first.id), 0);

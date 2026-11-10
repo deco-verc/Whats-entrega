@@ -20,6 +20,7 @@ export interface EnvConfig {
   readonly logLevel: "fatal" | "error" | "warn" | "info" | "debug" | "trace";
   readonly caktoWebhookSecret: string;
   readonly whatsappPairingPhone: string;
+  readonly publicBaseUrl: string;
   readonly paths: StoragePaths;
   readonly isProduction: boolean;
   readonly isDevelopment: boolean;
@@ -91,6 +92,67 @@ export function validatePairingPhone(rawPhone?: string): string {
     );
   }
   return digitsOnly;
+}
+
+export function validatePublicBaseUrl(rawUrl?: string, isProduction: boolean = false): string {
+  if (!rawUrl || rawUrl.trim().length === 0) {
+    if (isProduction) {
+      return "https://18.191.162.237.sslip.io";
+    }
+    return "http://localhost:4000";
+  }
+
+  const trimmed = rawUrl.trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error(`Invalid PUBLIC_BASE_URL: "${rawUrl}" is not a valid absolute URL.`);
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`Invalid PUBLIC_BASE_URL: Protocol must be "http:" or "https:". Received: "${parsed.protocol}"`);
+  }
+
+  const isBareIpv4 = /^(\d{1,3}\.){3}\d{1,3}$/.test(parsed.hostname);
+  const isBareIpv6 = parsed.hostname.includes(":") && !parsed.hostname.includes(".");
+
+  if (parsed.protocol === "https:" && (isBareIpv4 || isBareIpv6)) {
+    throw new Error(
+      `Invalid PUBLIC_BASE_URL: Bare IP address "${parsed.hostname}" is not allowed with HTTPS protocol (causes SSL/TLS certificate failures). Use a valid domain or FQDN such as "https://18.191.162.237.sslip.io".`
+    );
+  }
+
+  return parsed.origin;
+}
+
+export function buildProjectWebhookUrl(slug?: string | null, publicBaseUrl?: string): string {
+  const base = (publicBaseUrl || (typeof env !== "undefined" ? env.publicBaseUrl : "") || "http://localhost:4000").replace(/\/+$/, "");
+  const cleanSlug = slug && slug.trim() ? encodeURIComponent(slug.trim()) : "default";
+  return `${base}/api/webhook/cakto/${cleanSlug}`;
+}
+
+export function isSecureWebhookUrl(urlStr: string): { valid: boolean; reason?: string } {
+  if (!urlStr || typeof urlStr !== "string") {
+    return { valid: false, reason: "URL vazia ou não informada." };
+  }
+  try {
+    const parsed = new URL(urlStr);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return { valid: false, reason: "Protocolo deve ser HTTP ou HTTPS." };
+    }
+    const isBareIpv4 = /^(\d{1,3}\.){3}\d{1,3}$/.test(parsed.hostname);
+    const isBareIpv6 = parsed.hostname.includes(":") && !parsed.hostname.includes(".");
+    if (parsed.protocol === "https:" && (isBareIpv4 || isBareIpv6)) {
+      return {
+        valid: false,
+        reason: "IPs diretos com HTTPS causam erro de certificado SSL. Utilize um domínio público FQDN (ex: .sslip.io).",
+      };
+    }
+    return { valid: true };
+  } catch {
+    return { valid: false, reason: "Formato de URL inválido." };
+  }
 }
 
 export function resolvePaths(): StoragePaths {
@@ -181,6 +243,7 @@ PORT=4000
 HOST=0.0.0.0
 NODE_ENV=development
 LOG_LEVEL=info
+PUBLIC_BASE_URL=https://18.191.162.237.sslip.io
 
 # Seguranca e Integracao Cakto
 CAKTO_WEBHOOK_SECRET=dev_cakto_webhook_secret
@@ -237,6 +300,7 @@ export function validateEnvConfig(candidate: EnvConfig): void {
     throw new Error("Fail-fast: Missing required environment variable CAKTO_WEBHOOK_SECRET in production.");
   }
   validatePairingPhone(candidate.whatsappPairingPhone);
+  validatePublicBaseUrl(candidate.publicBaseUrl, candidate.isProduction);
 }
 
 function buildEnvConfig(): EnvConfig {
@@ -250,6 +314,7 @@ function buildEnvConfig(): EnvConfig {
   const logLevel = validateLogLevel(process.env.LOG_LEVEL);
   const caktoWebhookSecret = validateCaktoSecret(process.env.CAKTO_WEBHOOK_SECRET, isProduction);
   const whatsappPairingPhone = validatePairingPhone(process.env.WHATSAPP_PAIRING_PHONE);
+  const publicBaseUrl = validatePublicBaseUrl(process.env.PUBLIC_BASE_URL, isProduction);
   const paths = resolvePaths();
 
   const cfg: EnvConfig = {
@@ -259,6 +324,7 @@ function buildEnvConfig(): EnvConfig {
     logLevel,
     caktoWebhookSecret,
     whatsappPairingPhone,
+    publicBaseUrl,
     paths,
     isProduction,
     isDevelopment,
