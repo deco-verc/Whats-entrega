@@ -72,6 +72,36 @@ describe("Fluxo de Integração e Homologação Cakto -> WhatsAppEntrega (18 Cen
       template_id: tplUpsell.id,
     });
 
+    const tplAbandono = repos.templates.create({
+      project_id: "proj_natal",
+      name: "Recuperação de Abandono",
+      content: "Ola {{primeiro_nome}}, finalize seu pedido!",
+    });
+    const tplPix = repos.templates.create({
+      project_id: "proj_natal",
+      name: "Lembrete de Pix",
+      content: "Ola {{primeiro_nome}}, segue seu Pix: {{pix_code}}",
+    });
+
+    repos.funnelTriggers.create({
+      project_id: "proj_natal",
+      name: "Recuperação de Abandono",
+      trigger_key: "trg_natal_abandonment",
+      event_type: "checkout_abandonment",
+      delay_seconds: 900,
+      is_active: 1,
+      template_id: tplAbandono.id,
+    });
+    repos.funnelTriggers.create({
+      project_id: "proj_natal",
+      name: "Lembrete de Pix",
+      trigger_key: "trg_natal_pix",
+      event_type: "pix_generated",
+      delay_seconds: 420,
+      is_active: 1,
+      template_id: tplPix.id,
+    });
+
     const app = createWebhookApp({
       secret: projectSecret,
       requireAdmin: false,
@@ -385,9 +415,13 @@ describe("Fluxo de Integração e Homologação Cakto -> WhatsAppEntrega (18 Cen
       RETURNING *
     `).get(JSON.stringify(rawPayload)) as any;
 
+    const adminHeader = (process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD)
+      ? { Authorization: `Basic ${Buffer.from(`${process.env.ADMIN_USERNAME}:${process.env.ADMIN_PASSWORD}`).toString("base64")}` }
+      : {};
+
     const res = await fetch(`http://127.0.0.1:${port}/api/projects/proj_natal/webhooks/${eventRow.id}/test`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...adminHeader },
       body: JSON.stringify({
         mode: "dispatch",
         phone: "5511999998888",
@@ -418,9 +452,13 @@ describe("Fluxo de Integração e Homologação Cakto -> WhatsAppEntrega (18 Cen
       RETURNING *
     `).get() as any;
 
+    const adminHeader = (process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD)
+      ? { Authorization: `Basic ${Buffer.from(`${process.env.ADMIN_USERNAME}:${process.env.ADMIN_PASSWORD}`).toString("base64")}` }
+      : {};
+
     const res = await fetch(`http://127.0.0.1:${port}/api/projects/proj_natal/webhooks/${eventRow.id}/test`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...adminHeader },
       body: JSON.stringify({
         mode: "dispatch",
         phone: "5511999998888",
@@ -552,5 +590,101 @@ describe("Fluxo de Integração e Homologação Cakto -> WhatsAppEntrega (18 Cen
 
     const deliveredJob = repos.messageQueue.findById(job.id);
     assert.ok(deliveredJob?.delivered_at);
+  });
+
+  // 19. Isolamento rigoroso entre Abandono de Checkout e Pix Gerado
+  test("Cenario 19: Webhook de abandono aciona exclusivamente regra de abandono e cancela se houver compra posterior", async () => {
+    const repos = createRepositories(db);
+
+    // 1. Envia webhook com evento de abandono
+    const bodyAbandono = JSON.stringify({
+      event: "checkout_abandonment",
+      data: {
+        customerCellphone: "5511999993333",
+        customerName: "Lead Abandono",
+        customerEmail: "abandono@teste.com",
+        createdAt: "2026-11-10T18:00:00Z",
+        product: { id: "prod_natal_main" },
+      },
+    });
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const signature = "v1=" + crypto.createHmac("sha256", projectSecret).update(`${timestamp}.${bodyAbandono}`).digest("hex");
+
+    const resAbandono = await fetch(`http://127.0.0.1:${port}/api/webhook/cakto/natal-descomplicado`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Cakto-Signature": signature,
+        "X-Cakto-Timestamp": timestamp,
+      },
+      body: bodyAbandono,
+    });
+    assert.equal(resAbandono.status, 200);
+
+    // Verifica que na fila existe SOMENTE o job de abandono
+    const jobsAbandono = db.prepare("SELECT * FROM message_queue WHERE phone = '5511999993333'").all() as any[];
+    assert.equal(jobsAbandono.length, 1);
+    assert.ok(jobsAbandono[0].content.includes("finalize seu pedido"));
+
+    // 2. Envia webhook de Pix para outro cliente
+    const bodyPix = JSON.stringify({
+      event: "pix_generated",
+      data: {
+        id: "tx_pix_999",
+        status: "waiting_payment",
+        customer: { name: "Lead Pix", phone: "5511999992222" },
+        product: { id: "prod_natal_main" },
+        pix: { qr_code_text: "00020126...PIX" },
+      },
+    });
+    const tsPix = Math.floor(Date.now() / 1000).toString();
+    const sigPix = "v1=" + crypto.createHmac("sha256", projectSecret).update(`${tsPix}.${bodyPix}`).digest("hex");
+
+    const resPix = await fetch(`http://127.0.0.1:${port}/api/webhook/cakto/natal-descomplicado`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Cakto-Signature": sigPix,
+        "X-Cakto-Timestamp": tsPix,
+      },
+      body: bodyPix,
+    });
+    assert.equal(resPix.status, 200);
+
+    // Verifica que na fila o cliente Pix recebeu SOMENTE a mensagem de Pix
+    const jobsPix = db.prepare("SELECT * FROM message_queue WHERE phone = '5511999992222'").all() as any[];
+    assert.equal(jobsPix.length, 1);
+    assert.ok(jobsPix[0].content.includes("segue seu Pix"));
+
+    // 3. Agora o cliente de abandono conclui a compra
+    const bodyPaid = JSON.stringify({
+      event: "purchase_approved",
+      data: {
+        id: "tx_paid_after_abandonment",
+        status: "paid",
+        customer: { name: "Lead Abandono", phone: "5511999993333" },
+        product: { id: "prod_natal_main" },
+      },
+    });
+    const tsPaid = Math.floor(Date.now() / 1000).toString();
+    const sigPaid = "v1=" + crypto.createHmac("sha256", projectSecret).update(`${tsPaid}.${bodyPaid}`).digest("hex");
+
+    const resPaid = await fetch(`http://127.0.0.1:${port}/api/webhook/cakto/natal-descomplicado`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Cakto-Signature": sigPaid,
+        "X-Cakto-Timestamp": tsPaid,
+      },
+      body: bodyPaid,
+    });
+    assert.equal(resPaid.status, 200);
+
+    // O job de abandono anterior agora deve ser inelegível
+    const { checkQueuedAutomation } = await import("../src/engine/project-automations.js");
+    const customer = repos.customers.findByPhone("5511999993333", "proj_natal");
+    assert.ok(customer);
+    const ineligibilityReason = checkQueuedAutomation(repos, jobsAbandono[0], customer);
+    assert.equal(ineligibilityReason, "O cliente concluiu a compra após o abandono.");
   });
 });

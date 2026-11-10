@@ -425,7 +425,7 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
       return;
     }
 
-    const eventName = req.body?.event ?? req.body?.event_type;
+    const eventName = req.body?.event ?? req.body?.event_type ?? rawRecords[0]?.event ?? rawRecords[0]?.event_type;
     const normalizedEventName = normalizeEventType(eventName);
 
     // Se o payload tiver dados de transacao mas nenhum evento, rejeita como 400
@@ -499,7 +499,7 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
     try {
       if (rawRecords.length === 0 || !eventName) throw new Error("Evento ausente.");
       if (isSigned && rawRecords.some((data) => !data || typeof data !== "object" ||
-          typeof data.product?.id !== "string" ||
+          (!data.product?.id && !data.product_id && !req.body?.product_id) ||
           (normalizedEventName !== "checkout_abandonment" && (typeof data.id !== "string" || typeof data.status !== "string")))) {
         throw new Error("Estrutura da entrega assinada inválida.");
       }

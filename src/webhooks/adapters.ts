@@ -143,54 +143,65 @@ export function validateCaktoSecret(
 export function normalizeEventType(rawEvent: string | undefined | null, rawStatus?: string | null): string {
   const event = String(rawEvent || "").trim().toLowerCase();
   const status = String(rawStatus || "").trim().toLowerCase();
+  const clean = event.replace(/[\s\-_.:]+/g, "_");
 
   if (
-    event === "purchase_approved" ||
-    event === "approved" ||
-    event === "paid" ||
-    (!event && (status === "approved" || status === "paid"))
+    clean === "purchase_approved" ||
+    clean === "compra_aprovada" ||
+    clean === "approved" ||
+    clean === "paid" ||
+    (!clean && (status === "approved" || status === "paid"))
   ) {
     return "purchase_approved";
   }
 
   if (
-    event === "checkout_abandonment" ||
-    event === "checkout_abandoned" ||
-    event === "abandono_checkout" ||
-    event === "abandono" ||
-    event === "abandonment" ||
-    event === "cart_abandonment" ||
-    event === "abandoned_cart" ||
-    (!event && (status === "abandoned" || status === "checkout_abandonment"))
+    clean === "checkout_abandonment" ||
+    clean === "checkout_abandoned" ||
+    clean === "abandoned_checkout" ||
+    clean === "abandono_checkout" ||
+    clean === "abandono_de_checkout" ||
+    clean === "abandono" ||
+    clean === "abandonment" ||
+    clean === "cart_abandonment" ||
+    clean === "abandoned_cart" ||
+    clean === "cart_abandoned" ||
+    clean === "carrinho_abandonado" ||
+    clean.includes("abandon") ||
+    clean.includes("abandono") ||
+    (!clean && (status === "abandoned" || status === "checkout_abandonment"))
   ) {
     return "checkout_abandonment";
   }
 
   if (
-    event === "pix_generated" ||
-    event === "pix_gerado" ||
-    event === "waiting_payment" ||
-    (!event && (status === "waiting_payment" || status === "pending"))
+    clean === "pix_generated" ||
+    clean === "pix_gerado" ||
+    clean === "pix_created" ||
+    clean === "pix_pendente" ||
+    clean === "waiting_payment" ||
+    (!clean && (status === "waiting_payment" || status === "pending"))
   ) {
     return "pix_generated";
   }
 
-  if (event === "boleto_generated" || event === "boleto_gerado" || (!event && status === "boleto_printed")) {
+  if (clean === "boleto_generated" || clean === "boleto_gerado" || (!clean && status === "boleto_printed")) {
     return "boleto_generated";
   }
 
   if (
-    event === "purchase_refunded" ||
-    event === "refund" ||
-    event === "refunded" ||
-    (!event && status === "refunded")
+    clean === "purchase_refunded" ||
+    clean === "reembolso" ||
+    clean === "refund" ||
+    clean === "refunded" ||
+    (!clean && status === "refunded")
   ) {
     return "purchase_refunded";
   }
 
   if (
-    event === "chargeback" ||
-    (!event && (status === "chargeback" || status === "dispute"))
+    clean === "chargeback" ||
+    (!clean && (status === "chargeback" || status === "dispute"))
   ) {
     return "chargeback";
   }
