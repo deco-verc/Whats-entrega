@@ -416,7 +416,8 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
     const secret = project.cakto_webhook_secret ?? (project.id === "default" ? options.secret ?? env.caktoWebhookSecret : "");
     const isSigned = Boolean(timestamp || signature?.startsWith("v1="));
     const providedSecret = signature || req.get("X-Cakto-Secret") || req.get("X-Webhook-Secret") ||
-      req.get("Authorization")?.match(/^Bearer (.+)$/)?.[1] || (!env.isProduction ? req.query.secret || req.query.token : undefined);
+      req.get("Authorization")?.match(/^Bearer (.+)$/)?.[1] ||
+      (typeof req.query.secret === "string" ? req.query.secret : typeof req.query.token === "string" ? req.query.token : undefined);
     const valid = isSigned
       ? validateCaktoSignature((req as Request & { rawBody?: Buffer }).rawBody, timestamp, signature, secret)
       : validateCaktoSecret(providedSecret ?? req.body?.secret, secret, signature ? req.body : undefined);
