@@ -441,6 +441,20 @@
     </div>
 
     <div class="header-actions">
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <span style="font-size: 11px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">Projeto:</span>
+        <select id="global-project-select" class="form-control" style="padding: 4px 10px; height: 32px; font-size: 13px; min-width: 170px; background: var(--bg-elevated); border: 1px solid var(--border-strong); color: var(--text-primary); border-radius: var(--radius-md);">
+          <option value="all">Todos os Projetos</option>
+          <option value="default">Projeto Padrão</option>
+        </select>
+      </div>
+      <button class="btn" id="btn-clear-queue-global" data-action="clear-queue" title="Limpar todos os envios da fila" style="border-color: rgba(239, 68, 68, 0.4); color: var(--status-danger); background: rgba(239, 68, 68, 0.08);">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="3 6 5 6 21 6"></polyline>
+          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+        </svg>
+        <span>Limpar Envios</span>
+      </button>
       <span class="badge badge-success" id="system-badge">
         <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor">
           <circle cx="4" cy="4" r="3"/>
@@ -469,6 +483,12 @@
         <rect x="3" y="14" width="7" height="7"></rect>
       </svg>
       Dashboard
+    </button>
+    <button class="tab-btn" role="tab" data-tab="projetos" aria-selected="false">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+      </svg>
+      Projetos
     </button>
     <button class="tab-btn" role="tab" data-tab="fila" aria-selected="false">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -851,6 +871,110 @@
       </div>
     </section>
 
+    <!-- Tab: Projetos Multi-Tenant & Cakto -->
+    <section id="tab-projetos" class="tab-panel" role="tabpanel">
+      <div id="project-alert" class="alert-box" style="display: none; margin-bottom: 16px;"></div>
+
+      <div class="content-grid" style="grid-template-columns: 1fr 1.8fr; margin-bottom: 20px;">
+        <!-- Card 1: Criar/Editar Projeto -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+              </svg>
+              <span id="proj-form-title">Novo Projeto</span>
+            </div>
+            <span id="proj-editing-badge" class="badge badge-warning" style="display: none;">Modo Edição</span>
+          </div>
+          <div class="card-body">
+            <form id="project-form">
+              <input type="hidden" id="proj-id" value="">
+
+              <div class="form-group">
+                <label class="form-label" for="proj-name">Nome do Projeto *</label>
+                <input id="proj-name" class="form-control" type="text" placeholder="Ex: Combo Natal Descomplicado" required>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" for="proj-slug">Slug do Projeto (Identificador de URL) *</label>
+                <input id="proj-slug" class="form-control" type="text" placeholder="Ex: combo-natal" required>
+                <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
+                  URL Webhook: <code id="proj-webhook-preview" style="color: var(--accent-primary);">https://18.191.162.237.sslip.io/api/webhook/cakto/combo-natal</code>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" for="proj-cakto-product-id">ID do Produto na Cakto (Opcional)</label>
+                <input id="proj-cakto-product-id" class="form-control" type="text" placeholder="Ex: prod_39821893">
+                <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Permite que o webhook padrão identifique este projeto automaticamente.</div>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" for="proj-cakto-secret">Chave Secreta Cakto (Opcional)</label>
+                <input id="proj-cakto-secret" class="form-control" type="text" placeholder="Deixe em branco para usar a chave global do .env">
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" for="proj-desc">Descrição</label>
+                <input id="proj-desc" class="form-control" type="text" placeholder="Breve resumo deste projeto/funil">
+              </div>
+
+              <div style="display: flex; gap: 10px; margin-top: 20px;">
+                <button type="submit" class="btn btn-primary" id="btn-save-project" style="flex: 1; justify-content: center;">
+                  <span id="proj-save-text">Salvar Projeto</span>
+                </button>
+                <button type="button" class="btn" id="btn-cancel-project" style="display: none; justify-content: center;">
+                  <span>Cancelar</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- Card 2: Lista de Projetos -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="8" y1="6" x2="21" y2="6"></line>
+                <line x1="8" y1="12" x2="21" y2="12"></line>
+                <line x1="8" y1="18" x2="21" y2="18"></line>
+              </svg>
+              Projetos Cadastrados
+            </div>
+            <button class="btn" data-action="refresh-projects" data-id="projects-refresh">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+              </svg>
+              <span>Atualizar</span>
+            </button>
+          </div>
+          <div class="card-body" style="padding: 0;">
+            <div class="table-responsive">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Projeto</th>
+                    <th>URL Webhook Cakto (HTTPS)</th>
+                    <th>ID Produto</th>
+                    <th>Templates</th>
+                    <th>Fila Pendente</th>
+                    <th>Ações</th>
+                  </tr>
+                </thead>
+                <tbody id="projects-table-body">
+                  <tr>
+                    <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 32px;">Carregando projetos...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- Tab 2: Fila de Mensagens -->
     <section id="tab-fila" class="tab-panel" role="tabpanel">
       <div class="card">
@@ -863,12 +987,21 @@
             </svg>
             Gerenciador da Fila Indiana (Anti-Banimento)
           </div>
-          <button class="btn" data-action="refresh-queue" data-id="tab-queue-refresh">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
-            </svg>
-            <span>Atualizar Fila</span>
-          </button>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <button class="btn" id="btn-clear-queue-tab" data-action="clear-queue" title="Limpar mensagens desta fila" style="border-color: rgba(239, 68, 68, 0.4); color: var(--status-danger); background: rgba(239, 68, 68, 0.08);">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              </svg>
+              <span>Limpar Fila</span>
+            </button>
+            <button class="btn" data-action="refresh-queue" data-id="tab-queue-refresh">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+              </svg>
+              <span>Atualizar Fila</span>
+            </button>
+          </div>
         </div>
         <div class="card-body" style="padding: 0;">
           <div class="table-responsive">
@@ -876,6 +1009,7 @@
               <thead>
                 <tr>
                   <th>ID</th>
+                  <th>Projeto</th>
                   <th>Telefone</th>
                   <th>Tipo Mensagem</th>
                   <th>Conteúdo</th>
@@ -886,7 +1020,7 @@
               </thead>
               <tbody id="full-queue-body">
                 <tr>
-                  <td colspan="7" style="text-align: center; color: var(--text-muted); padding: 32px;">Nenhum job registrado na fila.</td>
+                  <td colspan="8" style="text-align: center; color: var(--text-muted); padding: 32px;">Nenhum job registrado na fila.</td>
                 </tr>
               </tbody>
             </table>
@@ -1086,6 +1220,13 @@
               <input type="hidden" id="tpl-id" value="">
 
               <div class="form-group">
+                <label class="form-label" for="tpl-project-id">Projeto Vinculado</label>
+                <select id="tpl-project-id" class="form-control" style="background: var(--bg-elevated); border: 1px solid var(--border-strong); color: var(--text-primary);">
+                  <option value="default">Projeto Padrão</option>
+                </select>
+              </div>
+
+              <div class="form-group">
                 <label class="form-label" for="tpl-name">Nome Identificador do Template</label>
                 <input id="tpl-name" class="form-control" type="text" placeholder="Ex: Boas-vindas e Entrega Imediata" required>
               </div>
@@ -1204,19 +1345,25 @@
             Templates Cadastrados no SQLite
             <span id="tpl-count-badge" class="badge badge-info" style="margin-left: 8px;">0</span>
           </div>
-          <button type="button" id="tpl-refresh-btn" class="btn" style="border: 1px solid var(--border-subtle); padding: 5px 10px; font-size: 12px; background: transparent; color: var(--text-secondary);">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="23 4 23 10 17 10"></polyline>
-              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-            </svg>
-            Atualizar
-          </button>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <select id="filter-tpl-project" class="form-control" style="width: auto; padding: 4px 10px; font-size: 12px; height: 30px; background: var(--bg-elevated); border: 1px solid var(--border-strong); color: var(--text-primary); border-radius: var(--radius-md);">
+              <option value="all">Todos os Projetos</option>
+            </select>
+            <button type="button" id="tpl-refresh-btn" class="btn" style="border: 1px solid var(--border-subtle); padding: 5px 10px; font-size: 12px; background: transparent; color: var(--text-secondary);">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="23 4 23 10 17 10"></polyline>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+              </svg>
+              Atualizar
+            </button>
+          </div>
         </div>
         <div class="card-body" style="padding: 0;">
           <div class="table-responsive">
             <table>
               <thead>
                 <tr>
+                  <th>Projeto</th>
                   <th>Nome do Template</th>
                   <th>Conteúdo</th>
                   <th>Tags Detectadas</th>
@@ -1226,7 +1373,7 @@
               </thead>
               <tbody id="tpl-table-body">
                 <tr>
-                  <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">Carregando templates...</td>
+                  <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 24px;">Carregando templates...</td>
                 </tr>
               </tbody>
             </table>
@@ -1326,6 +1473,8 @@
     // =========================================================================
     const state = {
       status: null,
+      projects: [],
+      selectedProject: "all",
       queue: [],
       orders: [],
       templates: [],
@@ -1355,6 +1504,7 @@
         panel.classList.toggle('active', panel.id === `tab-${tabName}`);
       });
 
+      if (tabName === "projetos") loadProjects();
       if (tabName === "fila") loadQueue();
       if (tabName === "pedidos") loadOrders();
       if (tabName === "templates") loadTemplates();
@@ -1499,10 +1649,13 @@
       }
     }
 
-    // Carregamento de Mensagens da Fila via GET /api/queue
+    // Carregamento de Mensagens da Fila via GET /api/queue (com filtro de projeto)
     async function loadQueue() {
       try {
-        const res = await fetch("/api/queue");
+        const projParam = state.selectedProject && state.selectedProject !== "all"
+          ? `?project_id=${encodeURIComponent(state.selectedProject)}`
+          : "";
+        const res = await fetch(`/api/queue${projParam}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         state.queue = data.jobs || [];
@@ -1538,13 +1691,14 @@
       if (!tbody) return;
 
       if (jobs.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 32px;">Nenhum job registrado na fila.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--text-muted); padding: 32px;">Nenhum job registrado na fila.</td></tr>';
         return;
       }
 
       tbody.innerHTML = jobs.map(job => `
         <tr>
           <td class="tabular-nums" style="font-size: 11px;">${escapeHtml(job.id.slice(0, 8))}...</td>
+          <td><span class="badge" style="background: rgba(99, 102, 241, 0.15); color: var(--accent-primary); border: 1px solid rgba(99, 102, 241, 0.3); font-size: 11px;">${escapeHtml(job.project_id || 'default')}</span></td>
           <td class="tabular-nums">${escapeHtml(job.phone)}</td>
           <td><code>${escapeHtml(job.message_type)}</code></td>
           <td style="max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(job.content)}</td>
@@ -1553,6 +1707,38 @@
           <td><span class="badge ${job.status === 'SENT' ? 'badge-success' : job.status === 'PENDING' ? 'badge-warning' : 'badge-info'}">${escapeHtml(job.status)}</span></td>
         </tr>
       `).join("");
+    }
+
+    // Limpeza da fila de envios (geral ou por projeto)
+    async function clearQueue(projectId) {
+      const isAll = !projectId || projectId === "all";
+      const targetProj = isAll ? (state.selectedProject !== "all" ? state.selectedProject : undefined) : projectId;
+
+      const btnTab = document.getElementById("btn-clear-queue-tab");
+      const btnGlobal = document.getElementById("btn-clear-queue-global");
+      if (btnGlobal) btnGlobal.disabled = true;
+      if (btnTab) btnTab.disabled = true;
+
+      try {
+        const url = targetProj
+          ? `/api/queue/clear?project_id=${encodeURIComponent(targetProj)}`
+          : "/api/queue/clear";
+        const res = await fetch(url, { method: "POST" });
+        const data = await res.json();
+        if (data.success) {
+          showProjectAlert(`Fila limpa com sucesso! ${data.deleted_count} mensagem(ns) removida(s).`, "success");
+          await loadQueue();
+          await loadStatus();
+          if (typeof loadProjects === "function") await loadProjects();
+        } else {
+          showProjectAlert(`Erro ao limpar fila: ${data.error || "Falha desconhecida"}`, "error");
+        }
+      } catch (err) {
+        showProjectAlert(`Erro de rede ao limpar fila: ${err.message}`, "error");
+      } finally {
+        if (btnGlobal) btnGlobal.disabled = false;
+        if (btnTab) btnTab.disabled = false;
+      }
     }
 
     // Carregamento de Pedidos via GET /api/orders
@@ -1920,7 +2106,9 @@
       // =========================================================================
       async function loadTemplates() {
         try {
-          const res = await fetch("/api/templates");
+          const filterProj = document.getElementById("filter-tpl-project")?.value;
+          const param = filterProj && filterProj !== "all" ? `?project_id=${encodeURIComponent(filterProj)}` : "";
+          const res = await fetch(`/api/templates${param}`);
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const data = await res.json();
           state.templates = data.templates || [];
@@ -1938,7 +2126,7 @@
         if (!tbody) return;
 
         if (state.templates.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 32px;">Nenhum template cadastrado no momento. Clique em "Restaurar Padrao" para carregar modelos prontos.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 32px;">Nenhum template cadastrado no momento. Clique em "Restaurar Padrao" para carregar modelos prontos.</td></tr>';
           return;
         }
 
@@ -1960,6 +2148,7 @@
 
           return `
             <tr data-id="${escapeHtml(tpl.id)}">
+              <td><span class="badge" style="background: rgba(99, 102, 241, 0.15); color: var(--accent-primary); border: 1px solid rgba(99, 102, 241, 0.3); font-size: 11px;">${escapeHtml(tpl.project_id || 'default')}</span></td>
               <td style="font-weight: 500;">${escapeHtml(tpl.name)}</td>
               <td style="max-width: 300px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-secondary); font-size: 12px;" title="${escapeHtml(tpl.content)}">
                 ${escapeHtml(tpl.content)}
@@ -2140,10 +2329,12 @@
             const url = isEdit ? `/api/templates/${id}` : "/api/templates";
             const method = isEdit ? "PUT" : "POST";
 
+            const project_id = document.getElementById("tpl-project-id")?.value || "default";
+
             const res = await fetch(url, {
               method,
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ name, content, media_path }),
+              body: JSON.stringify({ name, content, media_path, project_id }),
             });
 
             const data = await res.json();
@@ -2193,6 +2384,296 @@
       const refreshBtn = document.getElementById("tpl-refresh-btn");
       if (refreshBtn) {
         refreshBtn.addEventListener("click", loadTemplates);
+      }
+
+      const filterTplProject = document.getElementById("filter-tpl-project");
+      if (filterTplProject) {
+        filterTplProject.addEventListener("change", loadTemplates);
+      }
+
+      // =========================================================================
+      // Modulo de Projetos Multi-Tenant & Cakto (CRUD e Gestao)
+      // =========================================================================
+      function showProjectAlert(msg, type = "info") {
+        const el = document.getElementById("project-alert");
+        if (!el) return;
+        el.className = `alert-box ${type === "error" ? "error" : "success"}`;
+        el.textContent = msg;
+        el.style.display = "block";
+        setTimeout(() => { el.style.display = "none"; }, 5000);
+      }
+
+      async function loadProjects() {
+        try {
+          const res = await fetch("/api/projects");
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+          state.projects = data.projects || [];
+
+          // Atualiza select global no topo
+          const globalSelect = document.getElementById("global-project-select");
+          if (globalSelect) {
+            const curVal = globalSelect.value;
+            globalSelect.innerHTML = '<option value="all">Todos os Projetos</option>' +
+              state.projects.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${escapeHtml(p.slug)})</option>`).join("");
+            if (curVal && Array.from(globalSelect.options).some(o => o.value === curVal)) {
+              globalSelect.value = curVal;
+            }
+          }
+
+          // Atualiza select no form de templates
+          const tplSelect = document.getElementById("tpl-project-id");
+          if (tplSelect) {
+            const curTplProj = tplSelect.value;
+            tplSelect.innerHTML = state.projects.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${escapeHtml(p.slug)})</option>`).join("");
+            if (curTplProj && Array.from(tplSelect.options).some(o => o.value === curTplProj)) {
+              tplSelect.value = curTplProj;
+            }
+          }
+
+          // Atualiza filtro de templates
+          const filterTplSelect = document.getElementById("filter-tpl-project");
+          if (filterTplSelect) {
+            const curFilterVal = filterTplSelect.value;
+            filterTplSelect.innerHTML = '<option value="all">Todos os Projetos</option>' +
+              state.projects.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join("");
+            if (curFilterVal && Array.from(filterTplSelect.options).some(o => o.value === curFilterVal)) {
+              filterTplSelect.value = curFilterVal;
+            }
+          }
+
+          renderProjectsTable();
+        } catch (err) {
+          console.error("Erro ao carregar projetos:", err);
+        }
+      }
+
+      function renderProjectsTable() {
+        const tbody = document.getElementById("projects-table-body");
+        if (!tbody) return;
+
+        if (state.projects.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 32px;">Nenhum projeto cadastrado.</td></tr>';
+          return;
+        }
+
+        const host = window.location.origin.replace("http://", "https://");
+        const defaultHost = host.includes("localhost") || host.includes("127.0.0.1")
+          ? host
+          : "https://18.191.162.237.sslip.io";
+
+        tbody.innerHTML = state.projects.map(p => {
+          const webhookUrl = `${defaultHost}/api/webhook/cakto/${encodeURIComponent(p.slug)}`;
+          const stats = p.stats || {};
+          const isDefault = p.id === "default" || p.slug === "default";
+
+          return `
+            <tr data-id="${escapeHtml(p.id)}">
+              <td>
+                <div style="font-weight: 600; color: var(--text-primary);">${escapeHtml(p.name)}</div>
+                <div style="font-size: 11px; color: var(--text-secondary);">Slug: <code>${escapeHtml(p.slug)}</code></div>
+                ${p.description ? `<div style="font-size: 11px; color: var(--text-muted);">${escapeHtml(p.description)}</div>` : ''}
+              </td>
+              <td>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <code class="tabular-nums" style="font-size: 11px; color: var(--accent-primary); max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(webhookUrl)}</code>
+                  <button type="button" class="btn btn-copy-webhook" data-url="${escapeHtml(webhookUrl)}" style="padding: 2px 6px; font-size: 11px;" title="Copiar URL Webhook HTTPS">
+                    Copiar
+                  </button>
+                </div>
+              </td>
+              <td>
+                ${p.cakto_product_id ? `<code>${escapeHtml(p.cakto_product_id)}</code>` : '<span style="color: var(--text-muted); font-size: 11px;">Qualquer</span>'}
+              </td>
+              <td class="tabular-nums">${stats.templates_count || 0}</td>
+              <td class="tabular-nums">
+                <span class="badge ${stats.pending_queue > 0 ? 'badge-warning' : 'badge-info'}">${stats.pending_queue || 0}</span>
+              </td>
+              <td style="white-space: nowrap;">
+                <button class="btn btn-clear-proj-queue" data-id="${escapeHtml(p.id)}" style="padding: 4px 8px; font-size: 11px; border: 1px solid rgba(239, 68, 68, 0.4); background: rgba(239, 68, 68, 0.08); color: var(--status-danger); margin-right: 4px;" title="Limpar fila deste projeto">
+                  Limpar Fila
+                </button>
+                <button class="btn btn-edit-proj" data-id="${escapeHtml(p.id)}" style="padding: 4px 8px; font-size: 11px; border: 1px solid var(--border-strong); background: transparent; color: var(--text-primary); margin-right: 4px;">
+                  Editar
+                </button>
+                ${!isDefault ? `
+                  <button class="btn btn-delete-proj" data-id="${escapeHtml(p.id)}" style="padding: 4px 8px; font-size: 11px; border: 1px solid rgba(239, 68, 68, 0.3); background: transparent; color: var(--status-danger);">
+                    Excluir
+                  </button>
+                ` : ''}
+              </td>
+            </tr>
+          `;
+        }).join("");
+
+        tbody.querySelectorAll('.btn-copy-webhook').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const url = btn.getAttribute('data-url');
+            if (navigator.clipboard) {
+              navigator.clipboard.writeText(url).then(() => {
+                const orig = btn.textContent;
+                btn.textContent = "Copiado!";
+                btn.style.color = "var(--status-success)";
+                setTimeout(() => {
+                  btn.textContent = orig;
+                  btn.style.color = "";
+                }, 2000);
+              });
+            }
+          });
+        });
+
+        tbody.querySelectorAll('.btn-clear-proj-queue').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const id = btn.getAttribute('data-id');
+            clearQueue(id);
+          });
+        });
+
+        tbody.querySelectorAll('.btn-edit-proj').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const id = btn.getAttribute('data-id');
+            const p = state.projects.find(x => x.id === id);
+            if (p) populateProjectForm(p);
+          });
+        });
+
+        tbody.querySelectorAll('.btn-delete-proj').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const id = btn.getAttribute('data-id');
+            await deleteProject(id);
+          });
+        });
+      }
+
+      function populateProjectForm(p) {
+        document.getElementById("proj-id").value = p.id;
+        document.getElementById("proj-name").value = p.name;
+        document.getElementById("proj-slug").value = p.slug;
+        document.getElementById("proj-desc").value = p.description || "";
+        document.getElementById("proj-cakto-product-id").value = p.cakto_product_id || "";
+        document.getElementById("proj-cakto-secret").value = p.cakto_webhook_secret || "";
+        document.getElementById("proj-form-title").textContent = `Editar Projeto: ${p.name}`;
+        document.getElementById("proj-save-text").textContent = "Atualizar Projeto";
+        document.getElementById("proj-editing-badge").style.display = "inline-flex";
+        document.getElementById("btn-cancel-project").style.display = "inline-flex";
+        updateWebhookPreview(p.slug);
+        document.getElementById("project-form").scrollIntoView({ behavior: "smooth" });
+      }
+
+      function resetProjectForm() {
+        document.getElementById("project-form").reset();
+        document.getElementById("proj-id").value = "";
+        document.getElementById("proj-form-title").textContent = "Novo Projeto";
+        document.getElementById("proj-save-text").textContent = "Salvar Projeto";
+        document.getElementById("proj-editing-badge").style.display = "none";
+        document.getElementById("btn-cancel-project").style.display = "none";
+        updateWebhookPreview("slug-do-projeto");
+      }
+
+      function updateWebhookPreview(slug) {
+        const previewEl = document.getElementById("proj-webhook-preview");
+        if (previewEl) {
+          const clean = (slug || "slug-do-projeto").trim().toLowerCase().replace(/[^a-z0-9-_]/g, "-");
+          previewEl.textContent = `https://18.191.162.237.sslip.io/api/webhook/cakto/${clean}`;
+        }
+      }
+
+      const projSlugInput = document.getElementById("proj-slug");
+      if (projSlugInput) {
+        projSlugInput.addEventListener("input", () => {
+          updateWebhookPreview(projSlugInput.value);
+        });
+      }
+
+      const projCancelBtn = document.getElementById("btn-cancel-project");
+      if (projCancelBtn) {
+        projCancelBtn.addEventListener("click", resetProjectForm);
+      }
+
+      const projectForm = document.getElementById("project-form");
+      if (projectForm) {
+        projectForm.addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const saveBtn = document.getElementById("btn-save-project");
+          saveBtn.disabled = true;
+
+          const id = document.getElementById("proj-id").value.trim();
+          const name = document.getElementById("proj-name").value.trim();
+          const slug = document.getElementById("proj-slug").value.trim();
+          const description = document.getElementById("proj-desc").value.trim() || null;
+          const cakto_product_id = document.getElementById("proj-cakto-product-id").value.trim() || null;
+          const cakto_webhook_secret = document.getElementById("proj-cakto-secret").value.trim() || null;
+
+          try {
+            const isEdit = Boolean(id);
+            const url = isEdit ? `/api/projects/${id}` : "/api/projects";
+            const method = isEdit ? "PUT" : "POST";
+
+            const res = await fetch(url, {
+              method,
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ name, slug, description, cakto_product_id, cakto_webhook_secret }),
+            });
+
+            const data = await res.json();
+            if (res.ok && data.success) {
+              showProjectAlert(isEdit ? "Projeto atualizado com sucesso!" : "Projeto criado com sucesso!", "success");
+              resetProjectForm();
+              await loadProjects();
+            } else {
+              showProjectAlert(`Erro: ${data.error || "Falha ao salvar projeto"}`, "error");
+            }
+          } catch (err) {
+            showProjectAlert(`Erro de conexao: ${err.message}`, "error");
+          } finally {
+            saveBtn.disabled = false;
+          }
+        });
+      }
+
+      async function deleteProject(id) {
+        try {
+          const res = await fetch(`/api/projects/${id}`, { method: "DELETE" });
+          const data = await res.json();
+          if (res.ok && data.success) {
+            showProjectAlert("Projeto excluído com sucesso.", "success");
+            await loadProjects();
+          } else {
+            showProjectAlert(`Erro ao excluir: ${data.error || "Falha"}`, "error");
+          }
+        } catch (err) {
+          showProjectAlert(`Erro de rede: ${err.message}`, "error");
+        }
+      }
+
+      document.querySelectorAll('button[data-action="refresh-projects"]').forEach(btn => {
+        btn.addEventListener("click", loadProjects);
+      });
+
+      // Seletor Global de Projeto no Topo
+      const globalProjectSelect = document.getElementById("global-project-select");
+      if (globalProjectSelect) {
+        globalProjectSelect.addEventListener("change", () => {
+          state.selectedProject = globalProjectSelect.value;
+          loadQueue();
+          loadOrders();
+        });
+      }
+
+      // Botões de Limpar Fila no Header e na Aba Fila
+      const btnClearQueueGlobal = document.getElementById("btn-clear-queue-global");
+      if (btnClearQueueGlobal) {
+        btnClearQueueGlobal.addEventListener("click", () => {
+          clearQueue(state.selectedProject);
+        });
+      }
+
+      const btnClearQueueTab = document.getElementById("btn-clear-queue-tab");
+      if (btnClearQueueTab) {
+        btnClearQueueTab.addEventListener("click", () => {
+          clearQueue(state.selectedProject);
+        });
       }
 
       // =========================================================================
@@ -2428,6 +2909,7 @@
 
       // Carga inicial (F5 reload persistence)
       loadStatus();
+      loadProjects();
       loadQueue();
       loadTemplates();
 

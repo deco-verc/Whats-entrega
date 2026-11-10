@@ -7,8 +7,40 @@ import { CATALOG } from "../config/catalog.js";
 // Tipagens e Contratos de Entidades do Dominio
 // ============================================================================
 
+export interface Project {
+  readonly id: string;
+  readonly name: string;
+  readonly slug: string;
+  readonly description: string | null;
+  readonly cakto_product_id: string | null;
+  readonly cakto_webhook_secret: string | null;
+  readonly is_active: number;
+  readonly created_at: string;
+  readonly updated_at: string;
+}
+
+export interface CreateProjectInput {
+  readonly id?: string;
+  readonly name: string;
+  readonly slug: string;
+  readonly description?: string | null;
+  readonly cakto_product_id?: string | null;
+  readonly cakto_webhook_secret?: string | null;
+  readonly is_active?: number;
+}
+
+export interface UpdateProjectInput {
+  readonly name?: string;
+  readonly slug?: string;
+  readonly description?: string | null;
+  readonly cakto_product_id?: string | null;
+  readonly cakto_webhook_secret?: string | null;
+  readonly is_active?: number;
+}
+
 export interface Customer {
   readonly id: string;
+  readonly project_id: string;
   readonly phone: string;
   readonly jid: string | null;
   readonly name: string;
@@ -20,6 +52,7 @@ export interface Customer {
 
 export interface UpsertCustomerInput {
   readonly id?: string;
+  readonly project_id?: string;
   readonly phone: string;
   readonly jid?: string | null;
   readonly name: string;
@@ -29,6 +62,7 @@ export interface UpsertCustomerInput {
 
 export interface Order {
   readonly id: string;
+  readonly project_id: string;
   readonly transaction_id: string;
   readonly customer_id: string;
   readonly product_id: string;
@@ -42,6 +76,7 @@ export interface Order {
 
 export interface CreateOrderInput {
   readonly id?: string;
+  readonly project_id?: string;
   readonly transaction_id: string;
   readonly customer_id: string;
   readonly product_id: string;
@@ -56,6 +91,7 @@ export type QueueMessageStatus = "PENDING" | "PROCESSING" | "SENT" | "FAILED" | 
 
 export interface QueueJob {
   readonly id: string;
+  readonly project_id: string;
   readonly customer_id: string;
   readonly phone: string;
   readonly jid: string | null;
@@ -72,6 +108,7 @@ export interface QueueJob {
 
 export interface EnqueueJobInput {
   readonly id?: string;
+  readonly project_id?: string;
   readonly customer_id: string;
   readonly phone: string;
   readonly jid?: string | null;
@@ -94,6 +131,7 @@ export interface AuditLog {
 
 export interface MessageTemplate {
   readonly id: string;
+  readonly project_id: string;
   readonly name: string;
   readonly content: string;
   readonly tags_json: string;
@@ -104,6 +142,7 @@ export interface MessageTemplate {
 
 export interface CreateTemplateInput {
   readonly id?: string;
+  readonly project_id?: string;
   readonly name: string;
   readonly content: string;
   readonly tags?: readonly string[] | string;
@@ -111,6 +150,7 @@ export interface CreateTemplateInput {
 }
 
 export interface UpdateTemplateInput {
+  readonly project_id?: string;
   readonly name?: string;
   readonly content?: string;
   readonly tags?: readonly string[] | string;
@@ -151,7 +191,7 @@ export class CustomerRepository {
   private readonly stmtFindById: Database.Statement<[string]>;
   private readonly stmtFindByPhone: Database.Statement<[string]>;
   private readonly stmtFindByJid: Database.Statement<[string]>;
-  private readonly stmtInsert: Database.Statement<[string, string, string | null, string, string | null, string]>;
+  private readonly stmtInsert: Database.Statement<[string, string, string | null, string, string | null, string, string]>;
   private readonly stmtUpdate: Database.Statement<[string, string | null, string | null, string | null, string]>;
   private readonly stmtUpdateState: Database.Statement<[string, string]>;
   private readonly stmtUpdateJid: Database.Statement<[string, string]>;
@@ -163,9 +203,9 @@ export class CustomerRepository {
     this.stmtFindById = db.prepare<[string]>(`SELECT * FROM customers WHERE id = ?`);
     this.stmtFindByPhone = db.prepare<[string]>(`SELECT * FROM customers WHERE phone = ?`);
     this.stmtFindByJid = db.prepare<[string]>(`SELECT * FROM customers WHERE jid = ?`);
-    this.stmtInsert = db.prepare<[string, string, string | null, string, string | null, string]>(`
-      INSERT INTO customers (id, phone, jid, name, email, current_state, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+    this.stmtInsert = db.prepare<[string, string, string | null, string, string | null, string, string]>(`
+      INSERT INTO customers (id, phone, jid, name, email, current_state, created_at, updated_at, project_id)
+      VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), ?)
       RETURNING *
     `);
     this.stmtUpdate = db.prepare<[string, string | null, string | null, string | null, string]>(`
@@ -220,6 +260,7 @@ export class CustomerRepository {
   public upsert(input: UpsertCustomerInput): Customer {
     const cleanPhone = input.phone.trim();
     const cleanName = input.name.trim();
+    const projectId = input.project_id?.trim() || "default";
 
     return this.db.transaction(() => {
       const existing = this.findByPhone(cleanPhone);
@@ -242,7 +283,8 @@ export class CustomerRepository {
         input.jid?.trim() ?? null,
         cleanName,
         input.email?.trim() ?? null,
-        state
+        state,
+        projectId
       ) as Customer;
       return created;
     })();
@@ -260,13 +302,31 @@ export class CustomerRepository {
     return updated ?? null;
   }
 
-  public listAll(limit = 100, offset = 0): Customer[] {
+  public listAll(limit = 100, offset = 0, projectId?: string): Customer[] {
+    if (projectId) {
+      return this.db.prepare(
+        "SELECT * FROM customers WHERE project_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?"
+      ).all(projectId, Math.max(1, limit), Math.max(0, offset)) as Customer[];
+    }
     return this.stmtListAll.all(Math.max(1, limit), Math.max(0, offset)) as Customer[];
   }
 
-  public count(): number {
+  public count(projectId?: string): number {
+    if (projectId) {
+      const row = this.db.prepare("SELECT COUNT(*) as total FROM customers WHERE project_id = ?").get(projectId) as { total: number } | undefined;
+      return row?.total ?? 0;
+    }
     const row = this.stmtCount.get() as { total: number } | undefined;
     return row?.total ?? 0;
+  }
+
+  public clearCustomers(projectId?: string): number {
+    if (projectId) {
+      const res = this.db.prepare("DELETE FROM customers WHERE project_id = ?").run(projectId);
+      return res.changes;
+    }
+    const res = this.db.prepare("DELETE FROM customers").run();
+    return res.changes;
   }
 }
 
@@ -282,7 +342,7 @@ export class OrderRepository {
   private readonly stmtListByTransaction: Database.Statement<[string]>;
   private readonly stmtListAll: Database.Statement<[number, number]>;
   private readonly stmtCount: Database.Statement<[]>;
-  private readonly stmtInsert: Database.Statement<[string, string, string, string, string, string, string, string | null, string]>;
+  private readonly stmtInsert: Database.Statement<[string, string, string, string, string, string, string, string | null, string, string]>;
 
   constructor(db: Database.Database = getDatabase()) {
     this.db = db;
@@ -300,12 +360,12 @@ export class OrderRepository {
       SELECT * FROM orders ORDER BY created_at DESC LIMIT ? OFFSET ?
     `);
     this.stmtCount = db.prepare<[]>(`SELECT COUNT(*) as total FROM orders`);
-    this.stmtInsert = db.prepare<[string, string, string, string, string, string, string, string | null, string]>(`
+    this.stmtInsert = db.prepare<[string, string, string, string, string, string, string, string | null, string, string]>(`
       INSERT INTO orders (
         id, transaction_id, customer_id, product_id, offer_id,
-        event_type, status, paid_at, raw_payload, created_at
+        event_type, status, paid_at, raw_payload, created_at, project_id
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
       RETURNING *
     `);
   }
@@ -324,6 +384,7 @@ export class OrderRepository {
     const id = input.id ?? `ord_${randomUUID()}`;
     const payload = stringifyPayload(input.raw_payload);
     const paidAt = input.paid_at ? normalizeIsoDate(input.paid_at) : null;
+    const projectId = input.project_id?.trim() || "default";
 
     const created = this.stmtInsert.get(
       id,
@@ -334,7 +395,8 @@ export class OrderRepository {
       input.event_type.trim(),
       input.status.trim(),
       paidAt,
-      payload
+      payload,
+      projectId
     ) as Order;
 
     return created;
@@ -371,13 +433,31 @@ export class OrderRepository {
     return this.stmtListByTransaction.all(transactionId) as Order[];
   }
 
-  public listAll(limit = 100, offset = 0): Order[] {
+  public listAll(limit = 100, offset = 0, projectId?: string): Order[] {
+    if (projectId) {
+      return this.db.prepare(
+        "SELECT * FROM orders WHERE project_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?"
+      ).all(projectId, Math.max(1, limit), Math.max(0, offset)) as Order[];
+    }
     return this.stmtListAll.all(Math.max(1, limit), Math.max(0, offset)) as Order[];
   }
 
-  public count(): number {
+  public count(projectId?: string): number {
+    if (projectId) {
+      const row = this.db.prepare("SELECT COUNT(*) as total FROM orders WHERE project_id = ?").get(projectId) as { total: number } | undefined;
+      return row?.total ?? 0;
+    }
     const row = this.stmtCount.get() as { total: number } | undefined;
     return row?.total ?? 0;
+  }
+
+  public clearOrders(projectId?: string): number {
+    if (projectId) {
+      const res = this.db.prepare("DELETE FROM orders WHERE project_id = ?").run(projectId);
+      return res.changes;
+    }
+    const res = this.db.prepare("DELETE FROM orders").run();
+    return res.changes;
   }
 }
 
@@ -390,7 +470,7 @@ export class MessageQueueRepository {
   private readonly stmtFindById: Database.Statement<[string]>;
   private readonly stmtFindDueJobs: Database.Statement<[string, number]>;
   private readonly stmtFindNextDue: Database.Statement<[string]>;
-  private readonly stmtInsert: Database.Statement<[string, string, string, string | null, string, string, string | null, string, string]>;
+  private readonly stmtInsert: Database.Statement<[string, string, string, string | null, string, string, string | null, string, string, string]>;
   private readonly stmtMarkProcessing: Database.Statement<[string]>;
   private readonly stmtMarkSent: Database.Statement<[string]>;
   private readonly stmtMarkFailedTerminal: Database.Statement<[string, string]>;
@@ -404,10 +484,12 @@ export class MessageQueueRepository {
   private readonly stmtListPending: Database.Statement<[number]>;
   private readonly stmtCountByStatus: Database.Statement<[string]>;
   private readonly stmtDelete: Database.Statement<[string]>;
+  private readonly stmtFindCustomerProject: Database.Statement<[string]>;
 
   constructor(db: Database.Database = getDatabase()) {
     this.db = db;
     this.stmtFindById = db.prepare<[string]>(`SELECT * FROM message_queue WHERE id = ?`);
+    this.stmtFindCustomerProject = db.prepare<[string]>(`SELECT project_id FROM customers WHERE id = ?`);
     this.stmtFindDueJobs = db.prepare<[string, number]>(`
       SELECT * FROM message_queue
       WHERE status = 'PENDING' AND scheduled_at <= ?
@@ -420,12 +502,12 @@ export class MessageQueueRepository {
       ORDER BY scheduled_at ASC
       LIMIT 1
     `);
-    this.stmtInsert = db.prepare<[string, string, string, string | null, string, string, string | null, string, string]>(`
+    this.stmtInsert = db.prepare<[string, string, string, string | null, string, string, string | null, string, string, string]>(`
       INSERT INTO message_queue (
         id, customer_id, phone, jid, message_type, content, media_path,
-        scheduled_at, status, attempts, last_error, created_at, updated_at
+        scheduled_at, status, attempts, last_error, created_at, updated_at, project_id
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, datetime('now'), datetime('now'))
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, datetime('now'), datetime('now'), ?)
       RETURNING *
     `);
     this.stmtMarkProcessing = db.prepare<[string]>(`
@@ -506,6 +588,18 @@ export class MessageQueueRepository {
     const id = input.id ?? `job_${randomUUID()}`;
     const scheduledAt = normalizeIsoDate(input.scheduled_at);
     const status = input.status ?? "PENDING";
+    let projectId = input.project_id?.trim();
+    if (!projectId && input.customer_id) {
+      try {
+        const cust = this.stmtFindCustomerProject.get(input.customer_id.trim()) as { project_id?: string } | undefined;
+        if (cust?.project_id) {
+          projectId = cust.project_id;
+        }
+      } catch {
+        // Fallback
+      }
+    }
+    projectId = projectId || "default";
 
     const job = this.stmtInsert.get(
       id,
@@ -516,7 +610,8 @@ export class MessageQueueRepository {
       input.content,
       input.media_path?.trim() ?? null,
       scheduledAt,
-      status
+      status,
+      projectId
     ) as QueueJob;
 
     return job;
@@ -534,13 +629,24 @@ export class MessageQueueRepository {
     })();
   }
 
-  public findDueJobs(referenceTime: string | Date = new Date(), limit = 10): QueueJob[] {
+  public findDueJobs(referenceTime: string | Date = new Date(), limit = 10, projectId?: string): QueueJob[] {
     const refIso = normalizeIsoDate(referenceTime);
+    if (projectId) {
+      return this.db.prepare(
+        "SELECT * FROM message_queue WHERE status = 'PENDING' AND scheduled_at <= ? AND project_id = ? ORDER BY scheduled_at ASC LIMIT ?"
+      ).all(refIso, projectId, Math.max(1, limit)) as QueueJob[];
+    }
     return this.stmtFindDueJobs.all(refIso, Math.max(1, limit)) as QueueJob[];
   }
 
-  public findNextDueJob(referenceTime: string | Date = new Date()): QueueJob | null {
+  public findNextDueJob(referenceTime: string | Date = new Date(), projectId?: string): QueueJob | null {
     const refIso = normalizeIsoDate(referenceTime);
+    if (projectId) {
+      const row = this.db.prepare(
+        "SELECT * FROM message_queue WHERE status = 'PENDING' AND scheduled_at <= ? AND project_id = ? ORDER BY scheduled_at ASC LIMIT 1"
+      ).get(refIso, projectId) as QueueJob | undefined;
+      return row ?? null;
+    }
     const row = this.stmtFindNextDue.get(refIso) as QueueJob | undefined;
     return row ?? null;
   }
@@ -610,11 +716,22 @@ export class MessageQueueRepository {
     return this.stmtListByCustomer.all(customerId) as QueueJob[];
   }
 
-  public listPending(limit = 100): QueueJob[] {
+  public listPending(limit = 100, projectId?: string): QueueJob[] {
+    if (projectId) {
+      return this.db.prepare(
+        "SELECT * FROM message_queue WHERE status = 'PENDING' AND project_id = ? ORDER BY scheduled_at ASC LIMIT ?"
+      ).all(projectId, Math.max(1, limit)) as QueueJob[];
+    }
     return this.stmtListPending.all(Math.max(1, limit)) as QueueJob[];
   }
 
-  public countByStatus(status: QueueMessageStatus): number {
+  public countByStatus(status: QueueMessageStatus, projectId?: string): number {
+    if (projectId) {
+      const row = this.db.prepare(
+        "SELECT COUNT(*) as total FROM message_queue WHERE status = ? AND project_id = ?"
+      ).get(status, projectId) as { total: number } | undefined;
+      return row?.total ?? 0;
+    }
     const row = this.stmtCountByStatus.get(status) as { total: number } | undefined;
     return row?.total ?? 0;
   }
@@ -622,6 +739,37 @@ export class MessageQueueRepository {
   public deleteJob(id: string): boolean {
     const res = this.stmtDelete.run(id);
     return res.changes > 0;
+  }
+
+  public listAll(options: { projectId?: string; status?: QueueMessageStatus; limit?: number; offset?: number } = {}): QueueJob[] {
+    const { projectId, status, limit = 50, offset = 0 } = options;
+    if (projectId && status) {
+      return this.db.prepare(
+        "SELECT * FROM message_queue WHERE project_id = ? AND status = ? ORDER BY scheduled_at DESC LIMIT ? OFFSET ?"
+      ).all(projectId, status, Math.max(1, limit), Math.max(0, offset)) as QueueJob[];
+    }
+    if (projectId) {
+      return this.db.prepare(
+        "SELECT * FROM message_queue WHERE project_id = ? ORDER BY scheduled_at DESC LIMIT ? OFFSET ?"
+      ).all(projectId, Math.max(1, limit), Math.max(0, offset)) as QueueJob[];
+    }
+    if (status) {
+      return this.db.prepare(
+        "SELECT * FROM message_queue WHERE status = ? ORDER BY scheduled_at DESC LIMIT ? OFFSET ?"
+      ).all(status, Math.max(1, limit), Math.max(0, offset)) as QueueJob[];
+    }
+    return this.db.prepare(
+      "SELECT * FROM message_queue ORDER BY scheduled_at DESC LIMIT ? OFFSET ?"
+    ).all(Math.max(1, limit), Math.max(0, offset)) as QueueJob[];
+  }
+
+  public clearQueue(projectId?: string): number {
+    if (projectId) {
+      const res = this.db.prepare("DELETE FROM message_queue WHERE project_id = ?").run(projectId);
+      return res.changes;
+    }
+    const res = this.db.prepare("DELETE FROM message_queue").run();
+    return res.changes;
   }
 }
 
@@ -674,12 +822,124 @@ export class AuditLogRepository {
 }
 
 // ============================================================================
+// Repositorio de Projetos (ProjectRepository)
+// ============================================================================
+
+export class ProjectRepository {
+  private readonly db: Database.Database;
+  private readonly stmtFindById: Database.Statement<[string]>;
+  private readonly stmtFindBySlug: Database.Statement<[string]>;
+  private readonly stmtFindByCaktoProductId: Database.Statement<[string]>;
+  private readonly stmtListAll: Database.Statement<[]>;
+  private readonly stmtInsert: Database.Statement<[string, string, string, string | null, string | null, string | null, number]>;
+  private readonly stmtUpdate: Database.Statement<[string, string, string | null, string | null, string | null, number, string]>;
+  private readonly stmtDelete: Database.Statement<[string]>;
+  private readonly stmtCount: Database.Statement<[]>;
+
+  constructor(db: Database.Database = getDatabase()) {
+    this.db = db;
+    this.stmtFindById = db.prepare<[string]>(`SELECT * FROM projects WHERE id = ?`);
+    this.stmtFindBySlug = db.prepare<[string]>(`SELECT * FROM projects WHERE slug = ?`);
+    this.stmtFindByCaktoProductId = db.prepare<[string]>(`SELECT * FROM projects WHERE cakto_product_id = ? AND is_active = 1 LIMIT 1`);
+    this.stmtListAll = db.prepare<[]>(`SELECT * FROM projects ORDER BY created_at ASC`);
+    this.stmtInsert = db.prepare<[string, string, string, string | null, string | null, string | null, number]>(`
+      INSERT INTO projects (id, name, slug, description, cakto_product_id, cakto_webhook_secret, is_active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+      RETURNING *
+    `);
+    this.stmtUpdate = db.prepare<[string, string, string | null, string | null, string | null, number, string]>(`
+      UPDATE projects
+      SET name = ?,
+          slug = ?,
+          description = ?,
+          cakto_product_id = ?,
+          cakto_webhook_secret = ?,
+          is_active = ?,
+          updated_at = datetime('now')
+      WHERE id = ?
+      RETURNING *
+    `);
+    this.stmtDelete = db.prepare<[string]>(`DELETE FROM projects WHERE id = ?`);
+    this.stmtCount = db.prepare<[]>(`SELECT COUNT(*) as total FROM projects`);
+  }
+
+  public findById(id: string): Project | null {
+    const row = this.stmtFindById.get(id) as Project | undefined;
+    return row ?? null;
+  }
+
+  public findBySlug(slug: string): Project | null {
+    const row = this.stmtFindBySlug.get(slug.trim().toLowerCase()) as Project | undefined;
+    return row ?? null;
+  }
+
+  public findByCaktoProductId(productId: string): Project | null {
+    const row = this.stmtFindByCaktoProductId.get(productId.trim()) as Project | undefined;
+    return row ?? null;
+  }
+
+  public listAll(): Project[] {
+    return this.stmtListAll.all() as Project[];
+  }
+
+  public create(input: CreateProjectInput): Project {
+    const id = input.id ?? `proj_${randomUUID()}`;
+    const slug = input.slug.trim().toLowerCase();
+    const row = this.stmtInsert.get(
+      id,
+      input.name.trim(),
+      slug,
+      input.description?.trim() ?? null,
+      input.cakto_product_id?.trim() ?? null,
+      input.cakto_webhook_secret?.trim() ?? null,
+      input.is_active ?? 1
+    ) as Project;
+    return row;
+  }
+
+  public update(id: string, input: UpdateProjectInput): Project | null {
+    const existing = this.findById(id);
+    if (!existing) return null;
+    const name = input.name !== undefined ? input.name.trim() : existing.name;
+    const slug = input.slug !== undefined ? input.slug.trim().toLowerCase() : existing.slug;
+    const description = input.description !== undefined ? input.description?.trim() ?? null : existing.description;
+    const caktoProductId = input.cakto_product_id !== undefined ? input.cakto_product_id?.trim() ?? null : existing.cakto_product_id;
+    const caktoSecret = input.cakto_webhook_secret !== undefined ? input.cakto_webhook_secret?.trim() ?? null : existing.cakto_webhook_secret;
+    const isActive = input.is_active !== undefined ? input.is_active : existing.is_active;
+
+    const updated = this.stmtUpdate.get(
+      name,
+      slug,
+      description,
+      caktoProductId,
+      caktoSecret,
+      isActive,
+      id
+    ) as Project;
+    return updated;
+  }
+
+  public delete(id: string): boolean {
+    if (id === "default") {
+      throw new Error("Não é permitido excluir o projeto padrão 'default'.");
+    }
+    const res = this.stmtDelete.run(id);
+    return res.changes > 0;
+  }
+
+  public count(): number {
+    const row = this.stmtCount.get() as { total: number } | undefined;
+    return row?.total ?? 0;
+  }
+}
+
+// ============================================================================
 // Repositorio de Templates de Mensagens (TemplateRepository)
 // ============================================================================
 
 export class TemplateRepository {
   private readonly db: Database.Database;
-  private readonly stmtInsert: Database.Statement<[string, string, string, string, string | null]>;
+  private readonly stmtInsert: Database.Statement<[string, string, string, string, string | null, string]>;
   private readonly stmtFindById: Database.Statement<[string]>;
   private readonly stmtFindByName: Database.Statement<[string]>;
   private readonly stmtFindAll: Database.Statement<[]>;
@@ -687,9 +947,9 @@ export class TemplateRepository {
 
   constructor(db: Database.Database = getDatabase()) {
     this.db = db;
-    this.stmtInsert = db.prepare<[string, string, string, string, string | null]>(`
-      INSERT INTO message_templates (id, name, content, tags_json, media_path, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+    this.stmtInsert = db.prepare<[string, string, string, string, string | null, string]>(`
+      INSERT INTO message_templates (id, name, content, tags_json, media_path, created_at, updated_at, project_id)
+      VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'), ?)
     `);
     this.stmtFindById = db.prepare<[string]>(`
       SELECT * FROM message_templates WHERE id = ?
@@ -709,6 +969,7 @@ export class TemplateRepository {
     const id = input.id || `tpl_${randomUUID()}`;
     const name = input.name.trim();
     const content = input.content.trim();
+    const projectId = input.project_id?.trim() || "default";
     const tagsJson = Array.isArray(input.tags)
       ? JSON.stringify(input.tags)
       : typeof input.tags === "string"
@@ -716,7 +977,7 @@ export class TemplateRepository {
       : JSON.stringify(this.extractTags(content));
     const mediaPath = input.media_path ? input.media_path.trim() : null;
 
-    this.stmtInsert.run(id, name, content, tagsJson, mediaPath);
+    this.stmtInsert.run(id, name, content, tagsJson, mediaPath, projectId);
     return this.findById(id)!;
   }
 
@@ -725,12 +986,25 @@ export class TemplateRepository {
     return row ?? null;
   }
 
-  public findByName(name: string): MessageTemplate | null {
-    const row = this.stmtFindByName.get(name) as MessageTemplate | undefined;
-    return row ?? null;
+  public findByName(name: string, projectId = "default"): MessageTemplate | null {
+    const stmt = this.db.prepare<[string, string]>(
+      "SELECT * FROM message_templates WHERE name = ? AND project_id = ? LIMIT 1"
+    );
+    const row = stmt.get(name, projectId) as MessageTemplate | undefined;
+    if (row) return row;
+    if (projectId !== "default") {
+      const defaultRow = stmt.get(name, "default") as MessageTemplate | undefined;
+      return defaultRow ?? null;
+    }
+    return null;
   }
 
-  public findAll(): MessageTemplate[] {
+  public findAll(projectId?: string): MessageTemplate[] {
+    if (projectId) {
+      return this.db.prepare(
+        "SELECT * FROM message_templates WHERE project_id = ? ORDER BY created_at DESC, rowid DESC"
+      ).all(projectId) as MessageTemplate[];
+    }
     return this.stmtFindAll.all() as MessageTemplate[];
   }
 
@@ -740,6 +1014,7 @@ export class TemplateRepository {
 
     const name = input.name !== undefined ? input.name.trim() : existing.name;
     const content = input.content !== undefined ? input.content.trim() : existing.content;
+    const projectId = input.project_id !== undefined ? input.project_id.trim() : existing.project_id;
     const tagsJson = input.tags !== undefined
       ? (Array.isArray(input.tags)
           ? JSON.stringify(input.tags)
@@ -753,9 +1028,9 @@ export class TemplateRepository {
 
     this.db.prepare(`
       UPDATE message_templates
-      SET name = ?, content = ?, tags_json = ?, media_path = ?, updated_at = datetime('now')
+      SET name = ?, content = ?, tags_json = ?, media_path = ?, project_id = ?, updated_at = datetime('now')
       WHERE id = ?
-    `).run(name, content, tagsJson, mediaPath, id);
+    `).run(name, content, tagsJson, mediaPath, projectId, id);
 
     return this.findById(id);
   }
@@ -1022,6 +1297,7 @@ export interface Repositories {
   readonly messageQueue: MessageQueueRepository;
   readonly auditLogs: AuditLogRepository;
   readonly templates: TemplateRepository;
+  readonly projects: ProjectRepository;
   readonly transaction: <T>(fn: () => T) => T;
 }
 
@@ -1033,6 +1309,7 @@ export function createRepositories(db: Database.Database = getDatabase()): Repos
     messageQueue: new MessageQueueRepository(db),
     auditLogs: new AuditLogRepository(db),
     templates: new TemplateRepository(db),
+    projects: new ProjectRepository(db),
     transaction: <T>(fn: () => T): T => db.transaction(fn)(),
   };
 }
@@ -1047,6 +1324,7 @@ export const orderRepository = repositories.orders;
 export const messageQueueRepository = repositories.messageQueue;
 export const auditLogRepository = repositories.auditLogs;
 export const templateRepository = repositories.templates;
+export const projectRepository = repositories.projects;
 
 export function seedDefaultTemplates(repo: TemplateRepository = templateRepository): number {
   return repo.seedDefaultTemplates();

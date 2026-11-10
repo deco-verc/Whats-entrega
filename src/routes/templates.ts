@@ -18,11 +18,12 @@ export function createTemplatesRouter(options: TemplateRouterOptions = {}): Rout
     return new TemplateRepository(db);
   };
 
-  // GET /api/templates - Listar todos os templates
-  router.get("/", (_req: Request, res: Response): void => {
+  // GET /api/templates - Listar templates (opcionalmente filtrado por projeto)
+  router.get("/", (req: Request, res: Response): void => {
     try {
       const repo = getRepo();
-      const templates = repo.findAll();
+      const projectId = req.query.project_id ? String(req.query.project_id) : undefined;
+      const templates = repo.findAll(projectId);
       res.status(200).json({ success: true, templates });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -106,7 +107,8 @@ export function createTemplatesRouter(options: TemplateRouterOptions = {}): Rout
   router.post("/", (req: Request, res: Response): void => {
     try {
       const repo = getRepo();
-      const { name, content, tags, media_path } = req.body || {};
+      const { name, content, tags, media_path, mediaPath, project_id, projectId } = req.body || {};
+      const targetProjectId = (project_id || projectId || "default").trim();
 
       if (!name || typeof name !== "string" || name.trim().length === 0) {
         res.status(400).json({
@@ -137,7 +139,8 @@ export function createTemplatesRouter(options: TemplateRouterOptions = {}): Rout
         name,
         content,
         tags,
-        media_path,
+        media_path: media_path || mediaPath,
+        project_id: targetProjectId,
       });
 
       res.status(201).json({ success: true, template: created });
@@ -152,7 +155,7 @@ export function createTemplatesRouter(options: TemplateRouterOptions = {}): Rout
     try {
       const repo = getRepo();
       const id = String(req.params.id);
-      const { name, content, tags, media_path } = req.body || {};
+      const { name, content, tags, media_path, mediaPath, project_id, projectId } = req.body || {};
 
       const existing = repo.findById(id);
       if (!existing) {
@@ -179,19 +182,12 @@ export function createTemplatesRouter(options: TemplateRouterOptions = {}): Rout
         }
       }
 
-      if (name !== undefined && (typeof name !== "string" || name.trim().length === 0)) {
-        res.status(400).json({
-          success: false,
-          error: "ValidationError: campo 'name' nao pode ser vazio.",
-        });
-        return;
-      }
-
       const updated = repo.update(id, {
         name,
         content,
         tags,
-        media_path,
+        media_path: media_path || mediaPath,
+        project_id: project_id || projectId,
       });
 
       res.status(200).json({ success: true, template: updated });

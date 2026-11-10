@@ -299,17 +299,20 @@ export interface ProcessWebhookRepositories {
  */
 export function processNormalizedWebhook(
   payload: NormalizedCaktoPayload,
-  repos: ProcessWebhookRepositories = {}
+  repos: ProcessWebhookRepositories = {},
+  projectId?: string
 ): ProcessWebhookResult {
   const custRepo = repos.customerRepo ?? customerRepository;
   const ordRepo = repos.orderRepo ?? orderRepository;
   const audRepo = repos.auditRepo ?? auditLogRepository;
+  const targetProjectId = projectId || "default";
 
   // 1. Upsert do cliente por telefone
   const customer = custRepo.upsert({
     phone: payload.customer.phone,
     name: payload.customer.name,
     email: payload.customer.email,
+    project_id: targetProjectId,
   });
 
   // 2. Registro do pedido com idempotencia por UNIQUE(transaction_id, event_type)
@@ -322,6 +325,7 @@ export function processNormalizedWebhook(
     status: payload.status,
     paid_at: payload.paidAt,
     raw_payload: payload.rawPayload,
+    project_id: targetProjectId,
   });
 
   // 3. Auditoria do evento

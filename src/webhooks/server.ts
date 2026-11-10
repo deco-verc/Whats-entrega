@@ -10,7 +10,8 @@ import { createRepositories } from "../database/repositories.js";
 import type { WASocket } from "@whiskeysockets/baileys";
 import { handleManualSend } from "../routes/manual-send.js";
 import { createTemplatesRouter } from "../routes/templates.js";
-import { TemplateRepository } from "../database/repositories.js";
+import { createProjectsRouter } from "../routes/projects.js";
+import { TemplateRepository, ProjectRepository, MessageQueueRepository } from "../database/repositories.js";
 import {
   getWhatsAppConnectionStatus,
   getWhatsAppConnectionState,
@@ -122,36 +123,75 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
     });
   });
 
-  app.get("/api/queue", (_req: Request, res: Response) => {
+  app.get("/api/queue", (req: Request, res: Response) => {
     try {
       const db = getDatabase();
-      const jobs = db.prepare(
-        "SELECT id, customer_id, phone, message_type, content, scheduled_at, status, attempts, last_error, created_at FROM message_queue ORDER BY scheduled_at DESC LIMIT 50"
-      ).all();
+      const projectId = req.query.project_id ? String(req.query.project_id).trim() : undefined;
+      let query = "SELECT id, project_id, customer_id, phone, message_type, content, scheduled_at, status, attempts, last_error, created_at FROM message_queue";
+      const params: unknown[] = [];
+      if (projectId && projectId !== "all") {
+        query += " WHERE project_id = ?";
+        params.push(projectId);
+      }
+      query += " ORDER BY scheduled_at DESC LIMIT 50";
+      const jobs = db.prepare(query).all(...params);
       res.status(200).json({ jobs });
     } catch (err: unknown) {
       res.status(500).json({ error: String(err) });
     }
   });
 
-  app.get("/api/orders", (_req: Request, res: Response) => {
+  // Limpeza da fila de mensagens (geral ou filtrada por projeto)
+  app.post("/api/queue/clear", (req: Request, res: Response) => {
     try {
       const db = getDatabase();
-      const orders = db.prepare(
-        "SELECT id, transaction_id, customer_id, product_id, offer_id, event_type, status, paid_at, created_at FROM orders ORDER BY created_at DESC LIMIT 50"
-      ).all();
+      const queueRepo = new MessageQueueRepository(db);
+      const projectId = (req.query.project_id ? String(req.query.project_id) : req.body?.project_id ? String(req.body.project_id) : undefined)?.trim();
+      const targetProject = projectId && projectId !== "all" ? projectId : undefined;
+      const deletedCount = queueRepo.clearQueue(targetProject);
+      res.status(200).json({
+        success: true,
+        message: targetProject
+          ? `Fila de mensagens do projeto '${targetProject}' limpa com sucesso.`
+          : "Fila de mensagens limpa com sucesso.",
+        deleted_count: deletedCount,
+        project_id: targetProject || "all",
+      });
+    } catch (err: unknown) {
+      res.status(500).json({ success: false, error: String(err) });
+    }
+  });
+
+  app.get("/api/orders", (req: Request, res: Response) => {
+    try {
+      const db = getDatabase();
+      const projectId = req.query.project_id ? String(req.query.project_id).trim() : undefined;
+      let query = "SELECT id, project_id, transaction_id, customer_id, product_id, offer_id, event_type, status, paid_at, created_at FROM orders";
+      const params: unknown[] = [];
+      if (projectId && projectId !== "all") {
+        query += " WHERE project_id = ?";
+        params.push(projectId);
+      }
+      query += " ORDER BY created_at DESC LIMIT 50";
+      const orders = db.prepare(query).all(...params);
       res.status(200).json({ orders });
     } catch (err: unknown) {
       res.status(500).json({ error: String(err) });
     }
   });
 
-  app.get("/api/customers", (_req: Request, res: Response) => {
+  app.get("/api/customers", (req: Request, res: Response) => {
     try {
       const db = getDatabase();
-      const customers = db.prepare(
-        "SELECT id, phone, name, email, current_state, jid, created_at FROM customers ORDER BY created_at DESC LIMIT 50"
-      ).all();
+      const projectId = req.query.project_id ? String(req.query.project_id).trim() : undefined;
+      let query = "SELECT id, project_id, phone, name, email, current_state, jid, created_at FROM customers";
+      const params: unknown[] = [];
+      if (projectId && projectId !== "all") {
+        query += " WHERE project_id = ?";
+        params.push(projectId);
+      }
+      query += " ORDER BY created_at DESC LIMIT 50";
+      const customers = db.prepare(query).all(...params);
       res.status(200).json({ customers });
     } catch (err: unknown) {
       res.status(500).json({ error: String(err) });
@@ -295,6 +335,16 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
     createTemplatesRouter({ templateRepo: effectiveTemplateRepo })
   );
 
+  // Gestao de Projetos Multi-Tenant (src/routes/projects.ts)
+  app.use(
+    "/api/projects",
+    createProjectsRouter({
+      templateRepo: effectiveTemplateRepo,
+      customerRepo: options.repositories?.customerRepo,
+      orderRepo: options.repositories?.orderRepo,
+    })
+  );
+
   // Instância da máquina de estados contextualizada
   const getEffectiveStateMachine = (): FunnelStateMachine => {
     if (options.repositories?.customerRepo && (options.repositories.customerRepo as any).db) {
@@ -308,11 +358,35 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
     return funnelStateMachine;
   };
 
-  // Endpoint receptor do Webhook da Cakto
+  // Endpoint receptor do Webhook da Cakto (com suporte multi-projeto)
   const handleCaktoWebhook = async (req: Request, res: Response): Promise<void> => {
     const startTime = Date.now();
 
     try {
+      const db = getDatabase();
+      const projectRepo = new ProjectRepository(db);
+      const rawSlug = req.params?.project_slug;
+      const projectSlug = typeof rawSlug === "string" ? rawSlug.trim() : undefined;
+
+      // Resolucao de projeto: 1) por slug na URL, 2) por query param, 3) por product_id no payload, 4) fallback default
+      let targetProject = projectSlug ? projectRepo.findBySlug(projectSlug) : null;
+      if (!targetProject && req.query.project_id) {
+        targetProject = projectRepo.findById(String(req.query.project_id)) ?? projectRepo.findBySlug(String(req.query.project_id));
+      }
+      if (!targetProject && req.query.project) {
+        targetProject = projectRepo.findBySlug(String(req.query.project));
+      }
+      if (!targetProject && req.body) {
+        const prodId = req.body?.data?.product?.id || req.body?.product?.id || req.body?.product_id;
+        if (prodId) {
+          targetProject = projectRepo.findByCaktoProductId(String(prodId));
+        }
+      }
+      if (!targetProject) {
+        targetProject = projectRepo.findById("default") ?? projectRepo.findBySlug("default");
+      }
+      const targetProjectId = targetProject?.id ?? "default";
+
       // 1. Extração do secret de multiplas origens permitidas
       const authHeader = req.headers["authorization"];
       const bearerSecret = typeof authHeader === "string" && authHeader.startsWith("Bearer ")
@@ -331,12 +405,16 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
           ? req.body.data.secret
           : undefined);
 
-      const expectedSecret = options.secret ?? env.caktoWebhookSecret;
-      const isValidSecret = validateCaktoSecret(providedSecret, expectedSecret, req.body);
+      const expectedSecret = targetProject?.cakto_webhook_secret || options.secret || env.caktoWebhookSecret;
+      let isValidSecret = validateCaktoSecret(providedSecret, expectedSecret, req.body);
+      if (!isValidSecret && (options.secret || env.caktoWebhookSecret)) {
+        isValidSecret = validateCaktoSecret(providedSecret, options.secret ?? env.caktoWebhookSecret, req.body);
+      }
 
       if (!isValidSecret) {
         res.status(401).json({
           error: "Unauthorized: invalid or missing Cakto webhook secret",
+          project_id: targetProjectId,
         });
         return;
       }
@@ -349,11 +427,23 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
         return;
       }
 
+      // Suporte especial para pings ou testes da plataforma Cakto
+      const rawEventName = String(req.body?.event || req.body?.event_type || req.body?.data?.event || "").trim().toLowerCase();
+      if (rawEventName === "test" || rawEventName === "ping") {
+        res.status(200).json({
+          success: true,
+          message: "Cakto test webhook received successfully",
+          project_id: targetProjectId,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
       // 3. Normalização do payload Cakto
       const normalized = normalizeCaktoWebhook(req.body);
 
-      // 4. Persistência idempotente no SQLite
-      const result = processNormalizedWebhook(normalized, options.repositories);
+      // 4. Persistência idempotente no SQLite com o projeto correto
+      const result = processNormalizedWebhook(normalized, options.repositories, targetProjectId);
       const processingTimeMs = Date.now() - startTime;
 
       // 5. Acionamento da Máquina de Estados do Funil (se pedido não for duplicado)
@@ -372,6 +462,7 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
               paidAt: normalized.paidAt,
               rawPayload: normalized.rawPayload,
               allowExistingOrder: true,
+              projectId: targetProjectId,
             });
           } else if (normalized.eventType === "pix_generated") {
             machine.handlePixGenerated({
@@ -384,6 +475,7 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
               pixCode: normalized.pix?.qrCodeText || "00020126580014br.gov.bcb.pix0136pix-simulador",
               rawPayload: normalized.rawPayload,
               allowExistingOrder: true,
+              projectId: targetProjectId,
             });
           } else if (normalized.eventType === "purchase_refunded" || normalized.eventType === "chargeback") {
             machine.handleRefund({
@@ -391,6 +483,7 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
               customerId: result.customer.id,
               phone: normalized.customer.phone,
               rawPayload: normalized.rawPayload,
+              projectId: targetProjectId,
             });
           }
         } catch (machineErr) {
@@ -404,6 +497,7 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
         transaction_id: normalized.transactionId,
         event_type: normalized.eventType,
         status: normalized.status,
+        project_id: targetProjectId,
         customer_id: result.customer.id,
         order_id: result.order.id,
         duplicate: result.isDuplicate,
@@ -422,8 +516,31 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
     }
   };
 
+  // Handlers de verificacao de URL da Cakto (GET e HEAD)
+  const handleCaktoValidation = (req: Request, res: Response): void => {
+    const rawSlug = req.params?.project_slug;
+    const slug = typeof rawSlug === "string" ? rawSlug.trim() : undefined;
+    res.status(200).json({
+      status: "ok",
+      message: "Cakto webhook endpoint is active and listening for events.",
+      slug: slug || "default",
+      timestamp: new Date().toISOString(),
+    });
+  };
+
+  app.get("/webhook/cakto", handleCaktoValidation);
+  app.get("/webhook/cakto/:project_slug", handleCaktoValidation);
+  app.get("/api/webhook/cakto", handleCaktoValidation);
+  app.get("/api/webhook/cakto/:project_slug", handleCaktoValidation);
+  app.head("/webhook/cakto", handleCaktoValidation);
+  app.head("/webhook/cakto/:project_slug", handleCaktoValidation);
+  app.head("/api/webhook/cakto", handleCaktoValidation);
+  app.head("/api/webhook/cakto/:project_slug", handleCaktoValidation);
+
   app.post("/webhook/cakto", handleCaktoWebhook);
+  app.post("/webhook/cakto/:project_slug", handleCaktoWebhook);
   app.post("/api/webhook/cakto", handleCaktoWebhook);
+  app.post("/api/webhook/cakto/:project_slug", handleCaktoWebhook);
 
   // =========================================================================
   // Simulador de Eventos Cakto e Funil WhatsApp (POST /api/simulator/cakto)
@@ -522,6 +639,7 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
         },
         body: caktoPayload,
         query: {},
+        params: {},
       } as unknown as Request;
 
       const simRes = {

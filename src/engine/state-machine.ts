@@ -59,6 +59,7 @@ export interface PixGeneratedEvent {
   readonly totalCents?: number;
   readonly rawPayload?: unknown;
   readonly allowExistingOrder?: boolean;
+  readonly projectId?: string;
 }
 
 export interface PurchaseApprovedEvent {
@@ -73,12 +74,14 @@ export interface PurchaseApprovedEvent {
   readonly totalCents?: number;
   readonly rawPayload?: unknown;
   readonly allowExistingOrder?: boolean;
+  readonly projectId?: string;
 }
 
 export interface InboundMessageEvent {
   readonly phoneOrJid: string;
   readonly text: string;
   readonly timestamp?: string | Date | null;
+  readonly projectId?: string;
 }
 
 export interface RefundEvent {
@@ -88,6 +91,7 @@ export interface RefundEvent {
   readonly reason?: string;
   readonly rawPayload?: unknown;
   readonly allowExistingOrder?: boolean;
+  readonly projectId?: string;
 }
 
 export interface StateMachineResult {
@@ -145,16 +149,18 @@ export class FunnelStateMachine {
   }
 
   /**
-   * Consulta o TemplateRepository por slug ou nome do template
+   * Consulta o TemplateRepository por slug ou nome do template, respeitando o projeto
    */
-  public getTemplate(stepKey: string, alternateKeys: string[] = []): MessageTemplate | null {
+  public getTemplate(stepKey: string, alternateKeys: string[] = [], projectId?: string): MessageTemplate | null {
     if (!this.repos?.templates) return null;
     const candidates = [stepKey, ...alternateKeys];
     for (const key of candidates) {
       try {
         const byId = this.repos.templates.findById(key);
-        if (byId) return byId;
-        const byName = this.repos.templates.findByName(key);
+        if (byId && (!projectId || byId.project_id === projectId || byId.project_id === "default")) {
+          return byId;
+        }
+        const byName = this.repos.templates.findByName(key, projectId);
         if (byName) return byName;
       } catch {
         // Ignora erro se tabela nao existir no banco isolado
@@ -216,6 +222,7 @@ export class FunnelStateMachine {
     return this.repos.transaction(() => {
       // 1. Upsert do cliente
       let customer = this.repos.customers.findByPhone(canonicalPhone);
+      const targetProjectId = event.projectId || customer?.project_id || "default";
       if (!customer) {
         customer = this.repos.customers.upsert({
           phone: canonicalPhone,
@@ -223,6 +230,7 @@ export class FunnelStateMachine {
           email: event.email?.trim() ?? null,
           jid: event.jid?.trim() ?? null,
           current_state: "WAITING_PAYMENT",
+          project_id: targetProjectId,
         });
       } else if (customer.current_state === "NEW") {
         customer = this.repos.customers.updateState(customer.id, "WAITING_PAYMENT") ?? customer;
@@ -246,6 +254,7 @@ export class FunnelStateMachine {
         event_type: "pix_generated",
         status: "waiting_payment",
         raw_payload: rawPayload,
+        project_id: customer.project_id || targetProjectId,
       });
 
       if (!orderResult.inserted && !event.allowExistingOrder) {
@@ -398,6 +407,7 @@ export class FunnelStateMachine {
 
       // 2. Upsert do cliente
       let customer = this.repos.customers.findByPhone(canonicalPhone);
+      const targetProjectId = event.projectId || customer?.project_id || "default";
       if (!customer) {
         customer = this.repos.customers.upsert({
           phone: canonicalPhone,
@@ -405,6 +415,7 @@ export class FunnelStateMachine {
           email: event.email?.trim() ?? null,
           jid: event.jid?.trim() ?? null,
           current_state: "NEW",
+          project_id: targetProjectId,
         });
       }
 
@@ -427,6 +438,7 @@ export class FunnelStateMachine {
         status: "approved",
         paid_at: event.paidAt ? normalizeIsoDate(event.paidAt) : new Date().toISOString(),
         raw_payload: rawPayload,
+        project_id: customer.project_id || targetProjectId,
       });
 
       if (!orderResult.inserted && !event.allowExistingOrder) {
