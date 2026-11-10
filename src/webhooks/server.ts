@@ -64,7 +64,10 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
     next();
   });
   const { ADMIN_USERNAME, ADMIN_PASSWORD } = process.env;
-  const shouldProtectAdmin = options.requireAdmin === false ? false : Boolean(options.requireAdmin || env.isProduction || (ADMIN_USERNAME && ADMIN_PASSWORD));
+  const isTestEnv = process.env.NODE_ENV === "test";
+  const shouldProtectAdmin = options.requireAdmin !== undefined
+    ? Boolean(options.requireAdmin)
+    : (env.isProduction || (!isTestEnv && Boolean(ADMIN_USERNAME && ADMIN_PASSWORD)));
   app.use(protectAdministration(
     options.adminCredentials ?? (ADMIN_USERNAME && ADMIN_PASSWORD ? { username: ADMIN_USERNAME, password: ADMIN_PASSWORD } : undefined),
     shouldProtectAdmin
@@ -473,6 +476,7 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
       res.status(200).json({
         success: true,
         test: true,
+        probe: classification.isMultiMethod,
         project_id: project.id,
         event_type: normalizedTest.eventType,
         transaction_id: normalizedTest.transactionId,

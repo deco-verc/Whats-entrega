@@ -236,7 +236,7 @@ export function createProjectWorkspaceRouter(db: () => Database.Database, option
         updated_at: new Date().toISOString(),
       };
 
-      const evaluations = scheduleProjectAutomations(repos, project, normalized, mockCustomer as any, mockOrder as any, true);
+      const evaluations = scheduleProjectAutomations(repos, project, normalized, mockCustomer as any, mockOrder as any, { simulation: true, dryRun: true });
 
       res.json({
         success: true,

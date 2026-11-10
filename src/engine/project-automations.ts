@@ -153,8 +153,19 @@ function ineligibility(db: Database.Database, rule: AutomationConditions, order:
 }
 
 export function scheduleProjectAutomations(
-  repos: Repositories, project: Project, event: NormalizedCaktoPayload, customer: Customer, order: Order, simulation = false
+  repos: Repositories,
+  project: Project,
+  event: NormalizedCaktoPayload,
+  customer: Customer,
+  order: Order,
+  simulationOrOptions: boolean | { simulation?: boolean; dryRun?: boolean } = false
 ) {
+  const options = typeof simulationOrOptions === "boolean"
+    ? { simulation: simulationOrOptions, dryRun: false }
+    : simulationOrOptions;
+  const simulation = Boolean(options.simulation);
+  const dryRun = Boolean(options.dryRun);
+
   const rules = repos.funnelTriggers.listByProject(project.id).filter((rule) => (
     rule.event_type === event.eventType && (project.id !== "default" || !LEGACY_KEYS.has(rule.trigger_key))
   ));
@@ -184,7 +195,7 @@ export function scheduleProjectAutomations(
       ? renderProjectTemplate(repos, template, projectTemplateVariables(repos.db, project, customer.name, event))
       : undefined;
     reason ??= result ? result.error : "Template do projeto indisponível.";
-    if (!reason && result && !simulation) {
+    if (!reason && result && !dryRun) {
       const job = repos.messageQueue.enqueue({
         project_id: project.id,
         customer_id: customer.id,
