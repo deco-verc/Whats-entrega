@@ -144,6 +144,19 @@ dialog::backdrop { background: #050a15bc; }
 .steps .complete, .steps [aria-current="step"] { border-color: var(--accent-primary); color: var(--text-primary); }
 .code { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 460px; overflow: auto; font-size: .82rem; }
 .qr { width: 184px; height: 184px; }
+/* WhatsApp Connection Modal (Dark Mode Premium) */
+.wa-status-banner { border: 1px solid var(--border); background: var(--bg-card); padding: 10px 14px; border-radius: var(--radius); }
+.wa-tabs { display: flex; gap: 8px; border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-bottom: 12px; }
+.wa-tab-pane.hidden { display: none !important; }
+.wa-qr-wrapper { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; }
+.wa-qr-box { width: 220px; height: 220px; background: #ffffff; padding: 12px; border-radius: 12px; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 16px #00000040; margin: 6px auto; }
+.wa-qr-img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.wa-qr-loading { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #1e293b; font-size: .85rem; }
+.wa-code-display { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 1.8rem; font-weight: 700; letter-spacing: 4px; padding: 12px 24px; background: var(--bg-card); border: 2px dashed var(--accent-primary); border-radius: 10px; color: var(--accent-primary); user-select: all; text-align: center; }
+.meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 10px 0; }
+.meta-grid small { display: block; color: var(--text-secondary); font-size: .75rem; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 2px; }
+.spinner { width: 24px; height: 24px; border: 3px solid rgba(0,0,0,0.1); border-top-color: var(--accent-primary); border-radius: 50%; animation: wa-spin 1s linear infinite; }
+@keyframes wa-spin { to { transform: rotate(360deg); } }
 .skip-link, .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .skip-link:focus { z-index: 12; width: auto; height: auto; clip-path: none; padding: 12px; background: var(--bg-card); }
 .mobile-menu { display: none; }

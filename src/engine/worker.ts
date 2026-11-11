@@ -233,6 +233,17 @@ export class QueueWorker {
       const sock = this.resolveSocket();
       if (!sock) {
         const errorMsg = "Socket WhatsApp nao disponivel ou desconectado";
+        this.repos.auditLogs.log(
+          "QueueWorker",
+          "CHANNEL_UNAVAILABLE",
+          "message_queue",
+          job.id,
+          {
+            level: "WARN",
+            reason: errorMsg,
+            project_id: job.project_id,
+          }
+        );
         this.repos.messageQueue.markAsFailed(
           job.id,
           errorMsg,

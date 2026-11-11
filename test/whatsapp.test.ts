@@ -618,7 +618,81 @@ describe("Extracao e Filtragem de Mensagens Inbound (socket.ts)", () => {
     assert.equal(mgr.getStatus(), "LOGGED_OUT");
 
     await mgr.disconnect();
-    assert.equal(mgr.getStatus(), "IDLE");
+    assert.ok(["DISCONNECTED", "IDLE"].includes(mgr.getStatus()));
+  });
+
+  test("WhatsAppSocketManager deve gerenciar estados QR_READY e AUTHENTICATING", async () => {
+    const mgr = new WhatsAppSocketManager();
+    const mockSocketObj = createMockWASocket({ registered: false });
+
+    await mgr.connect({
+      socketFactory: () => mockSocketObj.sock,
+      authStateLoader: async () => ({
+        state: mockSocketObj.sock.authState,
+        saveCreds: async () => {},
+      }),
+      autoReconnect: false,
+    });
+
+    assert.equal(mgr.getStatus(), "CONNECTING");
+
+    // Emissao do QR code pelo Baileys
+    mockSocketObj.emitEvent("connection.update", { qr: "mock_qr_string_123" });
+    assert.equal(mgr.getStatus(), "QR_READY");
+    assert.equal(mgr.getQr(), "mock_qr_string_123");
+
+    // Usuario escaneia e WhatsApp entra em connecting
+    mockSocketObj.emitEvent("connection.update", { connection: "connecting" });
+    assert.equal(mgr.getStatus(), "AUTHENTICATING");
+
+    // Conexao finalizada com sucesso
+    mockSocketObj.sock.user = { id: "5511999998888:1@s.whatsapp.net" } as any;
+    mockSocketObj.emitEvent("connection.update", { connection: "open" });
+    assert.equal(mgr.getStatus(), "CONNECTED");
+    assert.equal(mgr.getConnectedPhone(), "5511999998888");
+    assert.equal(mgr.getQr(), null);
+
+    const details = mgr.getConnectionDetails();
+    assert.equal(details.status, "CONNECTED");
+    assert.equal(details.connected, true);
+    assert.equal(details.connected_phone, "5511999998888");
+
+    await mgr.disconnect();
+    assert.equal(mgr.getStatus(), "DISCONNECTED");
+  });
+
+  test("WhatsAppSocketManager deve tratar restartRequired (515) e connectionReplaced (440)", async () => {
+    const mgr = new WhatsAppSocketManager();
+    const mockSocketObj = createMockWASocket({ registered: true });
+
+    await mgr.connect({
+      socketFactory: () => mockSocketObj.sock,
+      authStateLoader: async () => ({
+        state: mockSocketObj.sock.authState,
+        saveCreds: async () => {},
+      }),
+      autoReconnect: false,
+    });
+
+    // Simula 440 connectionReplaced
+    mockSocketObj.emitEvent("connection.update", {
+      connection: "close",
+      lastDisconnect: {
+        error: { output: { statusCode: 440 }, message: "Connection replaced" },
+      },
+    });
+    assert.equal(mgr.getStatus(), "DISCONNECTED");
+
+    // Simula 515 restartRequired
+    mockSocketObj.emitEvent("connection.update", {
+      connection: "close",
+      lastDisconnect: {
+        error: { output: { statusCode: 515 }, message: "Restart required" },
+      },
+    });
+    assert.equal(mgr.getStatus(), "RECONNECTING");
+
+    await mgr.disconnect();
   });
 
   test("WhatsAppSocketManager deve filtrar messages.upsert ignorando fromMe e processando clientes", async () => {

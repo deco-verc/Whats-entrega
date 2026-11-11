@@ -1014,6 +1014,47 @@ function renderSettings(project) {
   });
 }
 
+function maskPhone(phone) {
+  if (!phone) return "";
+  const clean = String(phone).replace(/\D/g, "");
+  if (clean.length === 13) {
+    return `+${clean.slice(0, 2)} ${clean.slice(2, 4)} 9****-${clean.slice(9)}`;
+  } else if (clean.length === 12) {
+    return `+${clean.slice(0, 2)} ${clean.slice(2, 4)} ****-${clean.slice(8)}`;
+  } else if (clean.length > 6) {
+    return clean.slice(0, 4) + "****" + clean.slice(-4);
+  }
+  return clean;
+}
+
+const waStatusLabels = {
+  CONNECTED: "Conectado",
+  CONNECTING: "Conectando ao WhatsApp...",
+  QR_READY: "Aguardando leitura do QR Code",
+  PAIRING_CODE_READY: "Código gerado (Aguardando pareamento)",
+  AUTHENTICATING: "Autenticando sessão...",
+  RECONNECTING: "Reconectando...",
+  LOGGED_OUT: "Sessão finalizada (Pareamento necessário)",
+  DISCONNECTED: "Desconectado",
+  IDLE: "Desconectado",
+  ERROR: "Erro de conexão",
+};
+
+const waStatusPillClasses = {
+  CONNECTED: "good",
+  CONNECTING: "warn",
+  QR_READY: "warn",
+  PAIRING_CODE_READY: "warn",
+  AUTHENTICATING: "warn",
+  RECONNECTING: "warn",
+  LOGGED_OUT: "bad",
+  DISCONNECTED: "warn",
+  IDLE: "warn",
+  ERROR: "bad",
+};
+
+let waDialogPollTimer = null;
+
 async function updateConnection() {
   try {
     state.connection = await api("/api/whatsapp/status");
@@ -1028,36 +1069,197 @@ async function updateConnection() {
     projectIndicator.firstElementChild.classList.toggle("online", online);
     projectIndicator.lastElementChild.textContent = online ? "WhatsApp conectado" : state.connection ? "WhatsApp desconectado" : "Status do WhatsApp";
   }
-  if (dialog.open && dialog.querySelector("#wa-state")) refreshConnectionDialog();
+  if (dialog.open && dialog.querySelector("#wa-dialog-root")) {
+    refreshConnectionDialog();
+  }
+}
+
+function renderWaDialogMarkup() {
+  const data = state.connection;
+  const statusKey = data?.status || (data?.connected ? "CONNECTED" : "DISCONNECTED");
+  const statusLabel = waStatusLabels[statusKey] || statusKey;
+  const pillClass = waStatusPillClasses[statusKey] || (data?.connected ? "good" : "warn");
+  const isConnected = Boolean(data?.connected);
+  const activeTab = state.waActiveTab || "qr";
+
+  if (isConnected) {
+    const masked = maskPhone(data?.connected_phone || data?.connectedPhone);
+    const connDate = data?.connected_at ? date(data.connected_at) : "Sessão ativa";
+    return `<div class="stack wa-modal-stack" id="wa-dialog-root">
+      <div class="wa-status-banner row" style="justify-content: space-between; align-items: center;">
+        <span>Status da Conexão</span>
+        <span class="pill ${pillClass}">${h(statusLabel)}</span>
+      </div>
+      <section class="panel stack">
+        <div class="card-head">
+          <h3>Sessão WhatsApp Ativa</h3>
+          <span class="pill good">Saudável</span>
+        </div>
+        <div class="meta-grid">
+          <div><small>Número Conectado</small><strong>${h(masked || "Identificado")}</strong></div>
+          <div><small>Conectado em</small><strong>${h(connDate)}</strong></div>
+        </div>
+        <p class="subtle">O envio de mensagens está ativo e compartilhado com todos os projetos do workspace.</p>
+        <div class="row" style="margin-top: 8px;">
+          ${button("Reconectar", "wa-reconnect")}
+          ${button("Desconectar", "wa-disconnect")}
+          ${button("Encerrar sessão", "wa-logout", "danger")}
+        </div>
+      </section>
+    </div>`;
+  }
+
+  return `<div class="stack wa-modal-stack" id="wa-dialog-root">
+    <div class="wa-status-banner row" style="justify-content: space-between; align-items: center;">
+      <span>Status da Conexão</span>
+      <span class="pill ${pillClass}">${h(statusLabel)}</span>
+    </div>
+
+    <div class="wa-tabs row" role="tablist">
+      <button type="button" class="button ${activeTab === 'qr' ? 'primary' : ''} wa-tab-btn" data-wa-tab="qr" role="tab" aria-selected="${activeTab === 'qr'}">Conectar por QR Code</button>
+      <button type="button" class="button ${activeTab === 'code' ? 'primary' : ''} wa-tab-btn" data-wa-tab="code" role="tab" aria-selected="${activeTab === 'code'}">Conectar por Código</button>
+    </div>
+
+    <div id="wa-tab-qr" class="wa-tab-pane ${activeTab === 'qr' ? 'active' : 'hidden'}">
+      <div class="wa-qr-wrapper stack">
+        <div class="wa-qr-box" id="wa-qr-container">
+          ${data?.qr ? `<img class="wa-qr-img" id="wa-qr" src="/api/whatsapp/qr?t=${Date.now()}" alt="QR Code WhatsApp" />` : `
+            <div class="wa-qr-loading">
+              <span class="spinner"></span>
+              <p>${statusKey === 'CONNECTING' || statusKey === 'RECONNECTING' ? 'Gerando QR Code...' : 'QR Code não disponível.'}</p>
+            </div>
+          `}
+        </div>
+        <p class="subtle" style="max-width: 400px; text-align: center; margin: 0 auto;">
+          1. Abra o WhatsApp no aparelho celular.<br>
+          2. Toque em <strong>Aparelhos conectados > Conectar um aparelho</strong>.<br>
+          3. Aponte a câmera para o QR Code acima.
+        </p>
+        <div class="row" style="justify-content: center; margin-top: 6px;">
+          ${button("Atualizar QR Code", "wa-refresh-qr", "primary")}
+          ${button("Reconectar", "wa-reconnect")}
+        </div>
+      </div>
+    </div>
+
+    <div id="wa-tab-code" class="wa-tab-pane ${activeTab === 'code' ? 'active' : 'hidden'}">
+      <form class="stack" id="wa-pairing-form">
+        <p class="subtle">Gere um código de 8 dígitos para conectar informando o número do telefone com DDD.</p>
+        ${field("Telefone com DDI + DDD", "phone", data?.pairing_phone || "", 'type="tel" placeholder="Ex: 5511999998888" required')}
+        ${formError}
+        ${submit("Gerar código de pareamento")}
+      </form>
+      <div id="wa-pairing-display-area" class="stack" style="align-items: center; margin-top: 10px; ${data?.pairing_code ? '' : 'display: none;'}">
+        <strong style="font-size: .85rem; color: var(--text-secondary);">Código de pareamento gerado:</strong>
+        <div class="wa-code-display" id="wa-pairing-code-val">${h(data?.pairing_code || '')}</div>
+        <p class="subtle" style="text-align: center; max-width: 400px; margin: 4px auto 0;">No WhatsApp: <strong>Aparelhos conectados > Conectar com número de telefone</strong> e digite o código acima.</p>
+      </div>
+      <div class="row" style="margin-top: 10px;">
+        ${button("Reconectar", "wa-reconnect")}
+      </div>
+    </div>
+
+    ${data?.last_disconnect_reason ? `
+      <div class="notice error" style="font-size: .82rem; margin-top: 6px;">
+        <strong>Último motivo:</strong> ${h(data.last_disconnect_reason)}
+      </div>
+    ` : ''}
+
+    <div class="row" style="justify-content: flex-end; margin-top: 10px;">
+      ${button("Encerrar sessão", "wa-logout", "danger")}
+    </div>
+  </div>`;
 }
 
 function refreshConnectionDialog() {
+  const root = dialog.querySelector("#wa-dialog-root");
+  if (!root) return;
+
   const data = state.connection;
-  const qr = dialog.querySelector("#wa-qr");
-  dialog.querySelector("#wa-state").textContent = data?.connected ? "Conectado" : data?.status ?? "Indisponível";
-  if (data?.qr && state.lastQr !== data.qr) qr.src = "/api/whatsapp/qr?t=" + Date.now();
-  state.lastQr = data?.qr;
-  qr.hidden = !data?.qr;
-  const pairingCode = dialog.querySelector("#pairing-code");
-  pairingCode.hidden = !data?.pairing_code;
-  pairingCode.textContent = data?.pairing_code ?? "";
+  const isConnected = Boolean(data?.connected);
+
+  const wasConnected = root.querySelector(".meta-grid") !== null;
+  if (isConnected !== wasConnected) {
+    root.outerHTML = renderWaDialogMarkup();
+    bindWaDialogEvents();
+    return;
+  }
+
+  const statusKey = data?.status || (isConnected ? "CONNECTED" : "DISCONNECTED");
+  const statusLabel = waStatusLabels[statusKey] || statusKey;
+  const pillClass = waStatusPillClasses[statusKey] || (isConnected ? "good" : "warn");
+  const bannerPill = root.querySelector(".wa-status-banner .pill");
+  if (bannerPill) {
+    bannerPill.className = `pill ${pillClass}`;
+    bannerPill.textContent = statusLabel;
+  }
+
+  const qrBox = root.querySelector("#wa-qr-container");
+  if (qrBox) {
+    if (data?.qr && state.lastQr !== data.qr) {
+      state.lastQr = data.qr;
+      qrBox.innerHTML = `<img class="wa-qr-img" id="wa-qr" src="/api/whatsapp/qr?t=${Date.now()}" alt="QR Code WhatsApp" />`;
+    } else if (!data?.qr && state.lastQr) {
+      state.lastQr = null;
+      qrBox.innerHTML = `<div class="wa-qr-loading"><span class="spinner"></span><p>${statusKey === 'CONNECTING' || statusKey === 'RECONNECTING' ? 'Gerando QR Code...' : 'QR Code não disponível.'}</p></div>`;
+    }
+  }
+
+  const pairingArea = root.querySelector("#wa-pairing-display-area");
+  const pairingVal = root.querySelector("#wa-pairing-code-val");
+  if (pairingArea && pairingVal) {
+    if (data?.pairing_code) {
+      pairingVal.textContent = data.pairing_code;
+      pairingArea.style.display = "";
+    }
+  }
+}
+
+function bindWaDialogEvents() {
+  dialog.querySelectorAll(".wa-tab-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.waActiveTab = btn.dataset.waTab;
+      const root = dialog.querySelector("#wa-dialog-root");
+      if (root) {
+        root.outerHTML = renderWaDialogMarkup();
+        bindWaDialogEvents();
+      }
+    });
+  });
+
+  const pairForm = dialog.querySelector("#wa-pairing-form");
+  if (pairForm) {
+    bindForm(pairForm, async (formData) => {
+      const result = await api("/api/whatsapp/pair", "POST", formData);
+      state.connection = { ...state.connection, pairing_code: result.pairing_code || result.pairingCode };
+      refreshConnectionDialog();
+      notify("Código de pareamento gerado.");
+    });
+  }
 }
 
 function connectionDialog() {
   state.lastQr = null;
-  showDialog("Conexão WhatsApp", `<div class="stack">
-    <p>Conexão compartilhada por todos os projetos.</p>
-    <strong id="wa-state" aria-live="polite">Consultando…</strong>
-    <img class="qr" id="wa-qr" alt="QR de pareamento do WhatsApp" hidden>
-    <form class="stack">${field("Telefone para pareamento", "phone", "", 'type="tel" required')}
-      ${formError}${submit("Gerar código de pareamento")}<strong id="pairing-code" aria-live="polite" hidden></strong></form>
-    <div class="row">${button("Reconectar", "wa-reconnect")}${button("Desconectar", "wa-disconnect")}${button("Encerrar sessão", "wa-logout", "danger")}</div></div>`);
-  refreshConnectionDialog();
-  bindForm(dialog.querySelector("form"), async (data) => {
-    const result = await api("/api/whatsapp/pair", "POST", data);
-    state.connection = { ...state.connection, pairing_code: result.pairing_code };
-    refreshConnectionDialog();
-  });
+  state.waActiveTab = state.waActiveTab || "qr";
+  showDialog("Conexão WhatsApp", renderWaDialogMarkup());
+  bindWaDialogEvents();
+
+  if (waDialogPollTimer) clearInterval(waDialogPollTimer);
+  waDialogPollTimer = setInterval(async () => {
+    if (!dialog.open || !dialog.querySelector("#wa-dialog-root")) {
+      clearInterval(waDialogPollTimer);
+      waDialogPollTimer = null;
+      return;
+    }
+    await updateConnection();
+  }, 2500);
+
+  dialog.addEventListener("close", () => {
+    if (waDialogPollTimer) {
+      clearInterval(waDialogPollTimer);
+      waDialogPollTimer = null;
+    }
+  }, { once: true });
 }
 
 function monitorWebhook(project) {
@@ -1262,6 +1464,11 @@ async function runAction(target) {
       await api(`/api/whatsapp/${action.slice(3)}`, "POST", {});
       await updateConnection();
       notify(action === "wa-reconnect" ? "Reconexão solicitada." : "WhatsApp desconectado.");
+      break;
+    case "wa-refresh-qr":
+      await api("/api/whatsapp/refresh-qr", "POST", {});
+      await updateConnection();
+      notify("QR Code atualizado.");
       break;
     case "wa-logout":
       confirmAction("Encerrar sessão WhatsApp", "Todos os projetos ficarão sem conexão até um novo pareamento.", "Encerrar sessão", async () => {
