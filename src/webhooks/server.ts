@@ -16,6 +16,7 @@ import { createTemplatesRouter } from "../routes/templates.js";
 import { createProjectsRouter } from "../routes/projects.js";
 import { createProjectWorkspaceRouter } from "../routes/project-workspace.js";
 import { createTriggersRouter } from "../routes/triggers.js";
+import { createAuditExportRouter } from "../routes/audit-export.js";
 import { protectAdministration } from "./admin-auth.js";
 import { linkedProducts, logWebhook, processProjectEvent } from "./project-events.js";
 import { AUTOMATION_EVENTS, storedConditions } from "../engine/project-automations.js";
@@ -257,19 +258,37 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
   // Endpoints do Ciclo de Vida e Pareamento WhatsApp Baileys
   app.get("/api/whatsapp/status", (_req: Request, res: Response): void => {
     const manager = options.whatsappManager ?? whatsappManager;
-    res.status(200).json({
-      status: manager.getStatus(),
-      connected: manager.isConnected(),
-      qr: manager.getQr(),
-      pairing_code: manager.getPairingCode(),
-      pairingCode: manager.getPairingCode(),
-    });
+    const details = typeof (manager as any).getConnectionDetails === "function"
+      ? (manager as any).getConnectionDetails()
+      : {
+          status: manager.getStatus(),
+          connected: manager.isConnected(),
+          qr: manager.getQr(),
+          pairing_code: manager.getPairingCode(),
+          pairingCode: manager.getPairingCode(),
+          connected_phone: manager.getConnectedPhone(),
+          connectedPhone: manager.getConnectedPhone(),
+          connected_at: null,
+          last_disconnect_reason: null,
+          last_disconnect_code: null,
+          last_error: null,
+          reconnect_attempts: 0,
+        };
+    res.status(200).json(details);
   });
 
-  app.get("/api/whatsapp/qr", (_req, res) => {
-    const raw = (options.whatsappManager ?? whatsappManager).getQr();
+  app.get("/api/whatsapp/qr", (_req: Request, res: Response): void => {
+    const manager = options.whatsappManager ?? whatsappManager;
+    const raw = manager.getQr();
     if (!raw) {
-      res.status(404).json({ error: "Nenhum QR disponível." });
+      if (!manager.isConnected() && manager.getStatus() !== "CONNECTING" && manager.getStatus() !== "RECONNECTING") {
+        void manager.connect().catch(() => {});
+      }
+      res.status(404).json({
+        error: "Nenhum QR disponível.",
+        status: manager.getStatus(),
+        message: "O QR Code está sendo gerado ou o WhatsApp já está conectado.",
+      });
       return;
     }
     const qr = qrcode(0, "M");
@@ -278,10 +297,42 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
     res.type("image/svg+xml").send(qr.createSvgTag(4, 16));
   });
 
-  app.post("/api/whatsapp/reconnect", async (_req, res) => {
-    const manager = options.whatsappManager ?? whatsappManager;
-    await manager.connect();
-    res.json({ success: true, status: manager.getStatus() });
+  app.post("/api/whatsapp/refresh-qr", async (_req: Request, res: Response): Promise<void> => {
+    try {
+      const manager = options.whatsappManager ?? whatsappManager;
+      if (typeof (manager as any).refreshQr === "function") {
+        await (manager as any).refreshQr();
+      } else {
+        await manager.connect();
+      }
+      res.status(200).json({
+        success: true,
+        status: manager.getStatus(),
+        message: "QR Code atualizado com sucesso.",
+      });
+    } catch (err: unknown) {
+      res.status(500).json({
+        error: "RefreshQrError",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  });
+
+  app.post("/api/whatsapp/reconnect", async (_req: Request, res: Response): Promise<void> => {
+    try {
+      const manager = options.whatsappManager ?? whatsappManager;
+      await manager.connect();
+      res.status(200).json({
+        success: true,
+        status: manager.getStatus(),
+        message: "Reconexão solicitada com sucesso.",
+      });
+    } catch (err: unknown) {
+      res.status(500).json({
+        error: "ReconnectError",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
   });
 
   app.post("/api/whatsapp/pair", async (req: Request, res: Response): Promise<void> => {
@@ -384,6 +435,9 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
       triggerRepo: options.repositories?.funnelTriggers,
     })
   );
+
+  // Gestao de Trilha de Auditoria e Exportacao de Dados (src/routes/audit-export.ts)
+  app.use("/api", createAuditExportRouter(database));
 
   const getEventRepos = () => createRepositories(database());
 
