@@ -611,10 +611,40 @@ function testDispatchDialog(project) {
       ${field("Nome do comprador de teste", "name", "Usuário Teste", "required")}
       ${select("Evento a disparar", "event_type", Object.entries(eventLabels), "purchase_approved")}
       ${select("Tipo da oferta", "offer_type", [["main", "Produto principal (main)"], ["upsell", "Upsell 1 / 2"], ["downsell", "Downsell"], ["orderbump", "Order Bump"]], "main")}
-      ${select("Comportamento do Delay", "fast_delay", [["fast", "Disparo imediato / rápido (2s para homologação)"], ["real", "Respeitar delay real configurado na regra"]], "fast")}
       ${field("Valor da compra (R$)", "amount", "97.00", 'type="number" min="0" step="0.01"')}
     </div>
-    <div class="stack compact">
+
+    <div class="field" style="margin-top: 4px;">
+      <label><strong>Como deseja executar o teste?</strong></label>
+      <div class="stack compact" style="margin-top: 6px;">
+        <label class="radio-card">
+          <input type="radio" name="test_mode" value="fast" checked />
+          <div>
+            <strong>Modo A — Teste Rápido (envios acelerados para homologação)</strong>
+            <small>Teste rápido: os tempos de espera serão reduzidos apenas nesta execução (ex: 2s para Entrega, 5s para Upsell) para você receber as mensagens rapidamente no WhatsApp.</small>
+          </div>
+        </label>
+        <label class="radio-card">
+          <input type="radio" name="test_mode" value="real" />
+          <div>
+            <strong>Modo B — Respeitar Delays Reais (comportamento temporal exato)</strong>
+            <small>Este teste respeitará os tempos originais configurados nas automações (ex: 1 min para Entrega, 30 min para Upsell) sem antecipar nenhum disparo.</small>
+          </div>
+        </label>
+      </div>
+    </div>
+
+    <div id="test-dispatch-preview-section" class="stack compact" style="margin-top: 6px;">
+      <div class="card-head">
+        <strong style="font-size: .85rem;">Prévia dos Tempos de Disparo:</strong>
+        <span class="pill warn" id="dispatch-preview-pill">Modo Rápido</span>
+      </div>
+      <div class="preview-table-wrapper" id="dispatch-preview-table-box">
+        <p class="muted" style="padding: 10px;">Carregando prévia das automações...</p>
+      </div>
+    </div>
+
+    <div class="stack compact" style="margin-top: 6px;">
       ${check("Declaro expressamente que este número de WhatsApp me pertence ou foi autorizado para receber este teste de disparo.", "authorized", false, 'required')}
       ${check("Simular que o destinatário autorizou mensagens de marketing (necessário para ofertas de upsell)", "marketing_consent", true)}
     </div>
@@ -625,16 +655,56 @@ function testDispatchDialog(project) {
     </div>
   </form>`, true);
 
-  bindForm(dialog.querySelector("#form-test-dispatch"), async ({ phone, name, event_type, offer_type, fast_delay, amount, authorized, marketing_consent }) => {
+  const previewBox = dialog.querySelector("#dispatch-preview-table-box");
+  const previewPill = dialog.querySelector("#dispatch-preview-pill");
+  const form = dialog.querySelector("#form-test-dispatch");
+
+  async function loadPreview() {
+    if (!previewBox) return;
+    const mode = form.querySelector('input[name="test_mode"]:checked')?.value || "fast";
+    const evt = form.querySelector('select[name="event_type"]')?.value || "purchase_approved";
+    if (previewPill) {
+      previewPill.className = `pill ${mode === 'fast' ? 'warn' : 'good'}`;
+      previewPill.textContent = mode === 'fast' ? 'Modo Rápido' : 'Delays Reais';
+    }
+    try {
+      const data = await api(endpoint(project, `test-dispatch/preview?event_type=${encodeURIComponent(evt)}&mode=${encodeURIComponent(mode)}`));
+      if (!data.automations || data.automations.length === 0) {
+        previewBox.innerHTML = '<p class="muted" style="padding: 10px;">Nenhuma automação ativa cadastrada para este evento.</p>';
+        return;
+      }
+      previewBox.innerHTML = table(["Automação", "Template", "Delay original", "Delay do teste", "Previsão de envio"], data.automations.map((a) => {
+        const timeStr = a.scheduled_at ? new Date(a.scheduled_at).toLocaleTimeString("pt-BR") : "—";
+        return [
+          h(a.name),
+          h(a.template_name || "—"),
+          h(a.original_delay_formatted),
+          `<strong>${h(a.test_delay_formatted)}</strong>`,
+          `<code>${h(timeStr)}</code>`
+        ];
+      }));
+    } catch (err) {
+      previewBox.innerHTML = `<p class="notice error" style="margin: 8px;">Erro ao carregar prévia: ${h(err.message)}</p>`;
+    }
+  }
+
+  form.querySelectorAll('input[name="test_mode"], select[name="event_type"]').forEach((el) => {
+    el.addEventListener("change", loadPreview);
+  });
+  void loadPreview();
+
+  bindForm(form, async ({ phone, name, event_type, offer_type, amount, authorized, marketing_consent }) => {
     if (authorized !== "on") {
       throw new Error("Confirme a autorização do número de telefone antes de disparar.");
     }
+    const mode = form.querySelector('input[name="test_mode"]:checked')?.value || "fast";
     const result = await api(endpoint(project, "test-dispatch"), "POST", {
       phone,
       name,
       event_type,
       offer_type,
-      fast_delay: fast_delay === "fast",
+      mode,
+      fast_delay: mode === "fast",
       amount: amount ? Number(amount) : 97,
       authorized: true,
       marketing_consent: marketing_consent === "on",
@@ -642,16 +712,31 @@ function testDispatchDialog(project) {
 
     const resultBox = dialog.querySelector("#test-dispatch-result");
     const jobsCount = result.jobs ? result.jobs.length : 0;
+    const modeLabel = mode === "fast" ? "Modo A — Teste Rápido" : "Modo B — Respeitar Delays Reais";
     resultBox.innerHTML = `
       <div class="notice" style="border-left: 3px solid #22c55e;">
-        <strong>Disparo de teste iniciado!</strong><br>
-        Identificador do evento: <code>${h(result.transaction_id)}</code><br>
+        <strong>Disparo de teste registrado na fila com sucesso!</strong><br>
+        Identificador do evento: <code>${h(result.transaction_id)}</code> · Modo: <strong>${h(modeLabel)}</strong><br>
         Mensagens agendadas: <strong>${jobsCount}</strong><br>
-        ${fast_delay === "fast" ? "O worker do WhatsApp processará os envios em poucos segundos." : "Os envios seguirão os delays configurados."}
+        <span class="subtle">${mode === "fast" ? "Os envios foram agendados para os próximos segundos para validação rápida." : "Os envios seguirão rigorosamente os delays configurados (ex: 1 min e 30 min)."}</span>
       </div>
-      ${table(["Automação", "Template", "Espera", "Resultado"], result.evaluations.map((rule) => [
-        h(rule.name), h(rule.template || "—"), h(formatDelay(rule.delay_seconds)), h(rule.result)
-      ]), "Nenhuma regra avaliada")}
+      <div class="card-head" style="margin-top: 10px;">
+        <strong style="font-size: .85rem;">Linha do Tempo dos Jobs Agendados:</strong>
+        <span class="pill good">${jobsCount} job${jobsCount > 1 ? 's' : ''}</span>
+      </div>
+      ${table(["Automação", "Tipo", "Horário Previsto", "Status"], (result.jobs || []).map((j) => {
+        const timeStr = j.scheduled_at ? new Date(j.scheduled_at).toLocaleTimeString("pt-BR") : "—";
+        const statusLabel = j.status === 'PENDING' ? 'Aguardando horário' : j.status;
+        return [
+          h(j.automation || "Automação"),
+          h(j.message_type || "TEXT"),
+          `<code>${h(timeStr)}</code>`,
+          `<span class="pill warn">${h(statusLabel)}</span>`
+        ];
+      }), "Nenhum job agendado")}
+      <div class="row" style="margin-top: 10px; justify-content: flex-end;">
+        <button type="button" class="button" onclick="document.querySelector('#dialog').close(); state.tab = 'queue'; render();">Acompanhar Fila de Envios</button>
+      </div>
     `;
     notify("Disparo de teste registrado.");
   });
@@ -699,7 +784,25 @@ async function testWebhookEventDialog(project, eventId) {
             <div class="form-grid">
               ${field("Seu WhatsApp para receber o teste", "phone", "", 'type="tel" required placeholder="5511999998888"')}
               ${field("Nome do comprador de teste", "name", "Usuário Homologação", "required")}
-              ${select("Comportamento do Delay", "fast_delay", [["fast", "Disparo rápido (2s para homologação)"], ["real", "Respeitar delay real configurado"]], "fast")}
+            </div>
+            <div class="field" style="margin-top: 4px;">
+              <label><strong>Como deseja executar o teste?</strong></label>
+              <div class="stack compact" style="margin-top: 6px;">
+                <label class="radio-card">
+                  <input type="radio" name="webhook_test_mode" value="fast" checked />
+                  <div>
+                    <strong>Modo A — Teste Rápido (envios acelerados para homologação)</strong>
+                    <small>Os tempos de espera serão reduzidos apenas nesta execução (ex: 2s e 5s) para validação imediata.</small>
+                  </div>
+                </label>
+                <label class="radio-card">
+                  <input type="radio" name="webhook_test_mode" value="real" />
+                  <div>
+                    <strong>Modo B — Respeitar Delays Reais (comportamento temporal exato)</strong>
+                    <small>Este teste respeitará os tempos originais configurados nas regras do projeto sem antecipar nenhum disparo.</small>
+                  </div>
+                </label>
+              </div>
             </div>
             <div class="stack compact">
               ${check("Declaro expressamente que este número de WhatsApp me pertence ou foi autorizado para este teste.", "authorized", false, 'required')}
@@ -754,24 +857,28 @@ async function testWebhookEventDialog(project, eventId) {
       }
     });
 
-    bindForm(dialog.querySelector("#form-webhook-dispatch"), async ({ phone, name, fast_delay, authorized, marketing_consent }) => {
+    const dispatchForm = dialog.querySelector("#form-webhook-dispatch");
+    bindForm(dispatchForm, async ({ phone, name, authorized, marketing_consent }) => {
       if (authorized !== "on") throw new Error("Confirme a autorização do número de telefone antes de disparar.");
+      const mode = dispatchForm.querySelector('input[name="webhook_test_mode"]:checked')?.value || "fast";
       resultBox.innerHTML = '<p class="muted">Agendando teste de disparo...</p>';
       const res = await api(endpoint(project, `webhooks/${encodeURIComponent(eventId)}/test`), "POST", {
         mode: "dispatch",
         phone,
         name,
-        fast_delay: fast_delay === "fast",
+        test_mode: mode,
+        fast_delay: mode === "fast",
         authorized: true,
         marketing_consent: marketing_consent === "on",
       });
       const jobsCount = res.jobs ? res.jobs.length : 0;
+      const modeLabel = mode === "fast" ? "Modo A — Teste Rápido" : "Modo B — Respeitar Delays Reais";
       resultBox.innerHTML = `
         <div class="notice" style="border-left: 3px solid #22c55e;">
           <strong>Teste autorizado registrado com sucesso!</strong><br>
-          Identificador: <code>${h(res.transaction_id)}</code><br>
+          Identificador: <code>${h(res.transaction_id)}</code> · Modo: <strong>${h(modeLabel)}</strong><br>
           Mensagens agendadas: <strong>${jobsCount}</strong><br>
-          ${fast_delay === "fast" ? "O worker do WhatsApp processará os disparos em poucos segundos." : "Os envios seguirão os delays configurados nas regras."}
+          ${mode === "fast" ? "O worker do WhatsApp processará os disparos em poucos segundos para validação rápida." : "Os envios seguirão rigorosamente os delays configurados nas regras."}
         </div>
         ${table(["Automação", "Template", "Espera", "Resultado"], res.evaluations.map((rule) => [
           h(rule.name), h(rule.template || "—"), h(formatDelay(rule.delay_seconds)), h(rule.result)

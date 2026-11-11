@@ -191,6 +191,14 @@ export class QueueWorker {
       }
 
       const job = dueJobs[0];
+
+      // Verificacao temporal rigorosa (Defesa em Profundidade):
+      // Garante que o worker nunca processe o job antes do scheduled_at
+      const scheduledTimeMs = new Date(job.scheduled_at).getTime();
+      if (!Number.isNaN(scheduledTimeMs) && scheduledTimeMs > referenceTime.getTime()) {
+        return null;
+      }
+
       this.stats.lastProcessedJobId = job.id;
       this.stats.lastRunTimestamp = new Date().toISOString();
 

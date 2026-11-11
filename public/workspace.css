@@ -144,6 +144,56 @@ dialog::backdrop { background: #050a15bc; }
 .steps .complete, .steps [aria-current="step"] { border-color: var(--accent-primary); color: var(--text-primary); }
 .code { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 460px; overflow: auto; font-size: .82rem; }
 .qr { width: 184px; height: 184px; }
+/* Modos de Teste e Previa de Delays (Laboratório de Testes) */
+.radio-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  cursor: pointer;
+  transition: border-color .15s ease, background-color .15s ease;
+}
+.radio-card:hover {
+  border-color: #3b6178;
+  background: var(--bg-secondary);
+}
+.radio-card.selected, .radio-card:has(input[type="radio"]:checked) {
+  border-color: var(--accent-primary);
+  background: rgba(14, 165, 233, 0.08);
+}
+.radio-card input[type="radio"] {
+  margin-top: 3px;
+  accent-color: var(--accent-primary);
+  cursor: pointer;
+  width: auto;
+  min-height: auto;
+}
+.radio-card strong {
+  display: block;
+  font-size: .88rem;
+  color: var(--text-primary);
+}
+.radio-card small {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-secondary);
+  line-height: 1.35;
+  font-size: .78rem;
+}
+.preview-table-wrapper {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-card);
+}
+.preview-table-wrapper table {
+  margin: 0;
+  width: 100%;
+}
 /* WhatsApp Connection Modal (Dark Mode Premium) */
 .wa-status-banner { border: 1px solid var(--border); background: var(--bg-card); padding: 10px 14px; border-radius: var(--radius); }
 .wa-tabs { display: flex; gap: 8px; border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-bottom: 12px; }

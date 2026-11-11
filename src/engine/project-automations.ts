@@ -152,24 +152,36 @@ function ineligibility(db: Database.Database, rule: AutomationConditions, order:
   return undefined;
 }
 
+export interface ScheduleAutomationsOptions {
+  readonly simulation?: boolean;
+  readonly dryRun?: boolean;
+  readonly testMode?: "fast" | "real";
+  readonly fastDelay?: boolean;
+  readonly eventTime?: number | Date | string;
+}
+
 export function scheduleProjectAutomations(
   repos: Repositories,
   project: Project,
   event: NormalizedCaktoPayload,
   customer: Customer,
   order: Order,
-  simulationOrOptions: boolean | { simulation?: boolean; dryRun?: boolean } = false
+  simulationOrOptions: boolean | ScheduleAutomationsOptions = false
 ) {
-  const options = typeof simulationOrOptions === "boolean"
+  const options: ScheduleAutomationsOptions = typeof simulationOrOptions === "boolean"
     ? { simulation: simulationOrOptions, dryRun: false }
     : simulationOrOptions;
   const simulation = Boolean(options.simulation);
   const dryRun = Boolean(options.dryRun);
+  const isFastTest = order.is_test === 1 && (options.testMode === "fast" || options.fastDelay === true);
+  const referenceTimeMs = options.eventTime
+    ? (typeof options.eventTime === "number" ? options.eventTime : new Date(options.eventTime).getTime())
+    : Date.now();
 
   const rules = repos.funnelTriggers.listByProject(project.id).filter((rule) => (
     rule.event_type === event.eventType && (project.id !== "default" || !LEGACY_KEYS.has(rule.trigger_key))
   ));
-  return rules.map((rule) => {
+  return rules.map((rule, index) => {
     const configured = storedConditions(repos.db, rule.id);
     const conditions = { ...(configured ?? {}), marketing: configured?.marketing ?? isMarketingStage(rule.trigger_key) };
     const template = rule.template_id ? repos.templates.findById(rule.template_id) : null;
@@ -190,7 +202,8 @@ export function scheduleProjectAutomations(
     ) reason = "O evento não atende às condições.";
     else reason = ineligibility(repos.db, conditions, order, customer, customer.current_state);
 
-    const schedule = new Date(Date.now() + rule.delay_seconds * 1000);
+    const effectiveDelaySeconds = isFastTest ? (index === 0 ? 2 : 2 + index * 3) : rule.delay_seconds;
+    const schedule = new Date(referenceTimeMs + effectiveDelaySeconds * 1000);
     const result = template?.project_id === project.id
       ? renderProjectTemplate(repos, template, projectTemplateVariables(repos.db, project, customer.name, event))
       : undefined;
@@ -204,7 +217,7 @@ export function scheduleProjectAutomations(
         message_type: result.type,
         content: result.content,
         media_path: result.mediaPath,
-        scheduled_at: schedule,
+        scheduled_at: schedule.toISOString(),
         is_test: order.is_test ?? 0,
       });
       repos.db.prepare("INSERT INTO automation_executions (job_id, trigger_id, order_id) VALUES (?, ?, ?)")
@@ -212,7 +225,9 @@ export function scheduleProjectAutomations(
     }
     return {
       id: rule.id, name: rule.name, template: template?.project_id === project.id ? template.name : null,
-      delay_seconds: rule.delay_seconds, scheduled_at: reason ? null : schedule.toISOString(),
+      delay_seconds: rule.delay_seconds,
+      test_delay_seconds: effectiveDelaySeconds,
+      scheduled_at: reason ? null : schedule.toISOString(),
       conditions, result: reason ?? "Elegível para agendamento",
     };
   });

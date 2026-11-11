@@ -281,16 +281,15 @@ export function createProjectWorkspaceRouter(db: () => Database.Database, option
         `).run(project.id, cleanPhone);
       }
 
-      const { customer, order } = processNormalizedWebhook(testNormalized, repos, project.id, { isTest: true });
-      const evaluations = scheduleProjectAutomations(repos, project, testNormalized, customer, order, false);
+      const rawMode = String(req.body.test_mode || req.body.mode || (req.body.fast_delay === true ? "fast" : req.body.fast_delay === false ? "real" : "fast")).toLowerCase();
+      const testMode: "fast" | "real" = rawMode === "real" ? "real" : "fast";
+      const referenceDate = new Date();
 
-      if (fast_delay === true) {
-        repos.db.prepare(`
-          UPDATE message_queue
-          SET scheduled_at = datetime('now', '+2 seconds'), updated_at = datetime('now')
-          WHERE project_id = ? AND customer_id = ? AND is_test = 1 AND status = 'PENDING'
-        `).run(project.id, customer.id);
-      }
+      const { customer, order } = processNormalizedWebhook(testNormalized, repos, project.id, { isTest: true });
+      const evaluations = scheduleProjectAutomations(repos, project, testNormalized, customer, order, {
+        testMode,
+        eventTime: referenceDate,
+      });
 
       const createdJobs = repos.db.prepare(`
         SELECT q.id, q.message_type, q.scheduled_at, q.status, t.name AS automation, t.delay_seconds
@@ -303,6 +302,7 @@ export function createProjectWorkspaceRouter(db: () => Database.Database, option
       res.json({
         success: true,
         mode: "dispatch",
+        test_mode: testMode,
         webhook_event_id: webhookEvent.id,
         transaction_id: testNormalized.transactionId,
         evaluations,
@@ -346,8 +346,62 @@ export function createProjectWorkspaceRouter(db: () => Database.Database, option
     res.json({ jobs });
   }));
 
+  router.get("/:projectId/test-dispatch/preview", route((req, res, repos, project) => {
+    const eventType = String(req.query.event_type || "purchase_approved");
+    const rawMode = String(req.query.mode || (req.query.fast_delay === "true" ? "fast" : "fast")).toLowerCase();
+    const mode: "fast" | "real" = rawMode === "real" ? "real" : "fast";
+    const now = new Date();
+    const referenceTimeMs = now.getTime();
+
+    const rules = repos.funnelTriggers.listByProject(project.id).filter((rule) => (
+      rule.event_type === eventType && (project.id !== "default" || !isLegacyAutomationKey(rule.trigger_key))
+    ));
+
+    const automations = rules.map((rule, index) => {
+      const template = rule.template_id ? repos.templates.findById(rule.template_id) : null;
+      const originalDelaySeconds = rule.delay_seconds;
+      const testDelaySeconds = mode === "fast" ? (index === 0 ? 2 : 2 + index * 3) : originalDelaySeconds;
+      const scheduledAt = new Date(referenceTimeMs + testDelaySeconds * 1000);
+
+      const formatDelay = (seconds: number): string => {
+        if (seconds <= 0) return "Imediato";
+        if (seconds < 60) return `${seconds} segundo${seconds > 1 ? "s" : ""}`;
+        const minutes = Math.floor(seconds / 60);
+        const remainingSec = seconds % 60;
+        if (minutes < 60) {
+          return remainingSec > 0
+            ? `${minutes} min e ${remainingSec}s`
+            : `${minutes} minuto${minutes > 1 ? "s" : ""}`;
+        }
+        const hours = Math.floor(minutes / 60);
+        const remainingMin = minutes % 60;
+        return remainingMin > 0
+          ? `${hours}h e ${remainingMin}min`
+          : `${hours} hora${hours > 1 ? "s" : ""}`;
+      };
+
+      return {
+        trigger_id: rule.id,
+        name: rule.name,
+        template_name: template?.project_id === project.id ? template.name : null,
+        original_delay_seconds: originalDelaySeconds,
+        original_delay_formatted: formatDelay(originalDelaySeconds),
+        test_delay_seconds: testDelaySeconds,
+        test_delay_formatted: formatDelay(testDelaySeconds),
+        scheduled_at: scheduledAt.toISOString(),
+        is_active: Boolean(rule.is_active),
+      };
+    });
+
+    res.json({
+      mode,
+      reference_time: now.toISOString(),
+      automations,
+    });
+  }));
+
   router.post("/:projectId/test-dispatch", route(async (req, res, repos, project) => {
-    const { phone, name, email, event_type, offer_type, product_id, offer_id, amount, marketing_consent, fast_delay, authorized } = req.body ?? {};
+    const { phone, name, email, event_type, offer_type, product_id, offer_id, amount, marketing_consent, fast_delay, mode: bodyMode, authorized } = req.body ?? {};
     if (!authorized) {
       res.status(400).json({ error: "Confirme que o número informado foi expressamente autorizado para teste." });
       return;
@@ -362,7 +416,9 @@ export function createProjectWorkspaceRouter(db: () => Database.Database, option
 
     const event = String(event_type || "purchase_approved");
     const rawOfferType = String(offer_type || "main").toLowerCase();
-    const isFast = fast_delay === true;
+    const rawMode = String(bodyMode || (fast_delay === true ? "fast" : fast_delay === false ? "real" : "fast")).toLowerCase();
+    const testMode: "fast" | "real" = rawMode === "real" ? "real" : "fast";
+    const referenceDate = new Date();
     const prodId = String(product_id || project.cakto_product_id || "PROD_TEST");
     const offId = String(offer_id || "OFF_TEST");
     const txId = `TEST_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
@@ -404,17 +460,11 @@ export function createProjectWorkspaceRouter(db: () => Database.Database, option
     // 4. Processar webhook com is_test = 1 (não incrementa métricas financeiras de produção)
     const { customer, order } = processNormalizedWebhook(normalized, repos, project.id, { isTest: true });
 
-    // 5. Agendar automações reais do projeto
-    const evaluations = scheduleProjectAutomations(repos, project, normalized, customer, order, false);
-
-    // 6. Se fast_delay estiver ativo, acelera jobs gerados para agora + 2 segundos
-    if (isFast) {
-      repos.db.prepare(`
-        UPDATE message_queue
-        SET scheduled_at = datetime('now', '+2 seconds'), updated_at = datetime('now')
-        WHERE project_id = ? AND customer_id = ? AND is_test = 1 AND status = 'PENDING'
-      `).run(project.id, customer.id);
-    }
+    // 5. Agendar automações reais do projeto com modo estrito e timestamp de referência único
+    const evaluations = scheduleProjectAutomations(repos, project, normalized, customer, order, {
+      testMode,
+      eventTime: referenceDate,
+    });
 
     const createdJobs = repos.db.prepare(`
       SELECT q.id, q.message_type, q.scheduled_at, q.status, t.name AS automation, t.delay_seconds
@@ -426,6 +476,7 @@ export function createProjectWorkspaceRouter(db: () => Database.Database, option
 
     res.json({
       success: true,
+      mode: testMode,
       transaction_id: txId,
       webhook_event_id: webhookEvent.id,
       evaluations,
