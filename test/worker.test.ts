@@ -436,6 +436,92 @@ describe("Worker de Fila Anti-Banimento e Entrypoint (worker.ts & index.ts)", ()
         `Jitter calculado (${result.jitterMs}) deve estar na faixa [30, 60]`
       );
     });
+
+    test("deve interpretar scheduled_at UTC do SQLite (YYYY-MM-DD HH:MM:SS sem Z) corretamente sem adiantar por fuso horario", async () => {
+      const customer = repos.customers.upsert({
+        phone: "5511933339988",
+        name: "Cliente UTC",
+      });
+
+      const job = repos.messageQueue.enqueue({
+        customer_id: customer.id,
+        phone: customer.phone,
+        message_type: "DELIVERY_MAIN",
+        content: "Mensagem agendada em UTC",
+        scheduled_at: new Date(Date.now() + 60_000),
+      });
+
+      const futureSqliteUtc = new Date(Date.now() + 60_000).toISOString().slice(0, 19).replace("T", " ");
+      repos.db.prepare("UPDATE message_queue SET scheduled_at = ? WHERE id = ?").run(futureSqliteUtc, job.id);
+
+      const worker = new QueueWorker({
+        repos,
+        sock: mockSocket,
+        minJitterMs: 0,
+        maxJitterMs: 0,
+        dispatchOptions: { skipPresenceSimulation: true },
+      });
+
+      const earlyResult = await worker.processNextJob();
+      assert.equal(earlyResult, null, "Job agendado para +60s UTC nao deve ser disparado antes do vencimento");
+
+      const pastSqliteUtc = new Date(Date.now() - 5_000).toISOString().slice(0, 19).replace("T", " ");
+      repos.db.prepare("UPDATE message_queue SET scheduled_at = ? WHERE id = ?").run(pastSqliteUtc, job.id);
+
+      const dueResult = await worker.processNextJob();
+      assert.ok(dueResult);
+      assert.equal(dueResult?.dispatchResult.success, true);
+    });
+
+    test("deve despachar job de teste autorizado (is_test=1) mesmo quando projeto estiver pausado, mantendo job de producao PENDING", async () => {
+      repos.projects.create({
+        id: "proj_paused_test",
+        name: "Projeto Pausado",
+        slug: "projeto-pausado-worker",
+        is_active: 0,
+      });
+
+      const customer = repos.customers.upsert({
+        project_id: "proj_paused_test",
+        phone: "5511944445566",
+        name: "Cliente Projeto Pausado",
+      });
+
+      const testJob = repos.messageQueue.enqueue({
+        project_id: "proj_paused_test",
+        customer_id: customer.id,
+        phone: customer.phone,
+        message_type: "DELIVERY_MAIN",
+        content: "Teste com projeto pausado",
+        is_test: 1,
+        scheduled_at: new Date(Date.now() - 2000),
+      });
+
+      const prodJob = repos.messageQueue.enqueue({
+        project_id: "proj_paused_test",
+        customer_id: customer.id,
+        phone: customer.phone,
+        message_type: "DELIVERY_MAIN",
+        content: "Producao com projeto pausado",
+        is_test: 0,
+        scheduled_at: new Date(Date.now() - 1000),
+      });
+
+      const worker = new QueueWorker({
+        repos,
+        sock: mockSocket,
+        minJitterMs: 0,
+        maxJitterMs: 0,
+        dispatchOptions: { skipPresenceSimulation: true },
+      });
+
+      await worker.processNextJob();
+      const secondRun = await worker.processNextJob();
+
+      assert.equal(repos.messageQueue.findById(testJob.id)?.status, "SENT");
+      assert.equal(secondRun, null);
+      assert.equal(repos.messageQueue.findById(prodJob.id)?.status, "PENDING");
+    });
   });
 
   describe("Entrypoint Unificado (src/index.ts)", () => {

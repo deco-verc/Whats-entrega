@@ -193,8 +193,11 @@ export class QueueWorker {
       const job = dueJobs[0];
 
       // Verificacao temporal rigorosa (Defesa em Profundidade):
-      // Garante que o worker nunca processe o job antes do scheduled_at
-      const scheduledTimeMs = new Date(job.scheduled_at).getTime();
+      // Garante que o worker nunca processe o job antes do scheduled_at (normalizando datas SQLite sem 'Z' como UTC)
+      const normalizedSchedule = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(job.scheduled_at.trim())
+        ? `${job.scheduled_at.trim().replace(" ", "T")}Z`
+        : job.scheduled_at;
+      const scheduledTimeMs = new Date(normalizedSchedule).getTime();
       if (!Number.isNaN(scheduledTimeMs) && scheduledTimeMs > referenceTime.getTime()) {
         return null;
       }
@@ -212,7 +215,10 @@ export class QueueWorker {
       const eligibility = () => {
         const recipient = this.repos.customers.findById(job.customer_id);
         if (!recipient || recipient.project_id !== job.project_id) return "Vínculo do destinatário inválido.";
-        if (!this.repos.projects.findById(job.project_id)?.is_active) return "Projeto pausado.";
+        const project = this.repos.projects.findById(job.project_id);
+        const archived = this.repos.db.prepare("SELECT 1 FROM project_workspace WHERE project_id = ? AND archived_at IS NOT NULL").get(job.project_id);
+        if (!project || archived) return "Projeto indisponível.";
+        if (!job.is_test && !project.is_active) return "Projeto pausado.";
         const stopped = this.repos.db.prepare("SELECT 1 FROM whatsapp_opt_out WHERE phone = ?").get(job.phone);
         const optOut = this.repos.db.prepare("SELECT 1 FROM contact_permissions WHERE project_id = ? AND phone = ? AND opted_out = 1").get(job.project_id, job.phone);
         return stopped || optOut ? "O destinatário solicitou descadastro." : checkQueuedAutomation(this.repos, job, recipient);

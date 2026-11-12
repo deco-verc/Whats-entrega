@@ -575,6 +575,7 @@ export async function dispatchQueueJob(
   let targetJid = job.jid;
   if (!targetJid || !targetJid.includes("@")) {
     const resolved = await resolveJid(job.phone, sock, {
+      projectId: job.project_id,
       updateDatabase: true,
       customerRepo: options?.customerRepo,
       auditRepo: auditRepo,

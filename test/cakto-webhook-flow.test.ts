@@ -444,6 +444,69 @@ describe("Fluxo de Integração e Homologação Cakto -> WhatsAppEntrega (18 Cen
     assert.equal(createdJob.status, "PENDING");
   });
 
+  // 12B. Replay repetido do mesmo evento de webhook em modo dispatch
+  test("Cenario 12B: Re-testar o mesmo webhook em modo dispatch com outro numero nao deve falhar nem colidir idempotencia", async () => {
+    const rawPayload = {
+      secret: "secret_natal_test",
+      event: "purchase_approved",
+      data: {
+        id: "tx_cakto_test_replay_twice",
+        product: { id: "prod_natal_main", name: "Natal Descomplicado" },
+        customer: { name: "Comprador Exemplo", phone: "5511000000000" },
+        amount: 47.0,
+      },
+    };
+
+    const eventRow = db.prepare(`
+      INSERT INTO webhook_events (project_id, event_type, product_id, transaction_id, payload_json, authenticated, result, is_test)
+      VALUES ('proj_natal', 'purchase_approved', 'prod_natal_main', 'tx_cakto_test_replay_twice', ?, 1, 'TEST', 1)
+      RETURNING *
+    `).get(JSON.stringify(rawPayload)) as any;
+
+    const adminHeader = (process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD)
+      ? { Authorization: `Basic ${Buffer.from(`${process.env.ADMIN_USERNAME}:${process.env.ADMIN_PASSWORD}`).toString("base64")}` }
+      : {};
+
+    const res1 = await fetch(`http://127.0.0.1:${port}/api/projects/proj_natal/webhooks/${eventRow.id}/test`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...adminHeader },
+      body: JSON.stringify({
+        mode: "dispatch",
+        phone: "5511999991111",
+        name: "Primeiro Teste",
+        authorized: true,
+        fast_delay: true,
+        marketing_consent: true,
+      }),
+    });
+    assert.equal(res1.status, 200);
+    const json1 = await res1.json() as any;
+    assert.equal(json1.success, true);
+    assert.ok(json1.jobs.length >= 1);
+
+    const res2 = await fetch(`http://127.0.0.1:${port}/api/projects/proj_natal/webhooks/${eventRow.id}/test`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...adminHeader },
+      body: JSON.stringify({
+        mode: "dispatch",
+        phone: "5511999992222",
+        name: "Segundo Teste",
+        authorized: true,
+        fast_delay: true,
+        marketing_consent: true,
+      }),
+    });
+    assert.equal(res2.status, 200);
+    const json2 = await res2.json() as any;
+    assert.equal(json2.success, true);
+    assert.ok(json2.jobs.length >= 1);
+
+    const jobsPhone1 = db.prepare("SELECT * FROM message_queue WHERE project_id = 'proj_natal' AND phone = '5511999991111'").all() as any[];
+    const jobsPhone2 = db.prepare("SELECT * FROM message_queue WHERE project_id = 'proj_natal' AND phone = '5511999992222'").all() as any[];
+    assert.ok(jobsPhone1.length >= 1);
+    assert.ok(jobsPhone2.length >= 1);
+  });
+
   // 13. Teste sem autorizacao
   test("Cenario 13: Teste em modo dispatch sem declaracao de autorizacao deve retornar 400", async () => {
     const eventRow = db.prepare(`

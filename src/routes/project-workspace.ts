@@ -263,10 +263,14 @@ export function createProjectWorkspaceRouter(db: () => Database.Database, option
         return;
       }
 
+      const baseTxId = normalized.transactionId.startsWith("TEST_")
+        ? normalized.transactionId
+        : `TEST_${normalized.transactionId}`;
+      const replayTxId = `${baseTxId}_REPLAY_${randomUUID().replace(/-/g, "").slice(0, 8)}`;
       const testCustName = typeof name === "string" && name.trim() ? name.trim() : normalized.customer.name || "Usuário de Homologação";
       const testNormalized = {
         ...normalized,
-        transactionId: normalized.transactionId.startsWith("TEST_") ? normalized.transactionId : `TEST_${normalized.transactionId}`,
+        transactionId: replayTxId,
         customer: {
           ...normalized.customer,
           name: testCustName,
@@ -285,10 +289,13 @@ export function createProjectWorkspaceRouter(db: () => Database.Database, option
       const testMode: "fast" | "real" = rawMode === "real" ? "real" : "fast";
       const referenceDate = new Date();
 
-      const { customer, order } = processNormalizedWebhook(testNormalized, repos, project.id, { isTest: true });
-      const evaluations = scheduleProjectAutomations(repos, project, testNormalized, customer, order, {
-        testMode,
-        eventTime: referenceDate,
+      const { order, evaluations } = repos.transaction(() => {
+        const processed = processNormalizedWebhook(testNormalized, repos, project.id, { isTest: true });
+        const evals = scheduleProjectAutomations(repos, project, testNormalized, processed.customer, processed.order, {
+          testMode,
+          eventTime: referenceDate,
+        });
+        return { order: processed.order, evaluations: evals };
       });
 
       const createdJobs = repos.db.prepare(`
@@ -458,12 +465,14 @@ export function createProjectWorkspaceRouter(db: () => Database.Database, option
     const normalized = normalizeCaktoWebhook(rawPayload);
 
     // 4. Processar webhook com is_test = 1 (não incrementa métricas financeiras de produção)
-    const { customer, order } = processNormalizedWebhook(normalized, repos, project.id, { isTest: true });
-
-    // 5. Agendar automações reais do projeto com modo estrito e timestamp de referência único
-    const evaluations = scheduleProjectAutomations(repos, project, normalized, customer, order, {
-      testMode,
-      eventTime: referenceDate,
+    // 5. Agendar automações reais do projeto de forma atômica
+    const { order, evaluations } = repos.transaction(() => {
+      const processed = processNormalizedWebhook(normalized, repos, project.id, { isTest: true });
+      const evals = scheduleProjectAutomations(repos, project, normalized, processed.customer, processed.order, {
+        testMode,
+        eventTime: referenceDate,
+      });
+      return { order: processed.order, evaluations: evals };
     });
 
     const createdJobs = repos.db.prepare(`
@@ -509,12 +518,18 @@ export function createProjectWorkspaceRouter(db: () => Database.Database, option
     }
 
     const order = job.order_id ? repos.orders.findById(job.order_id) : null;
+    const baseOrderTxId = order ? order.transaction_id.replace(/_REPLAY_[0-9a-f]+$/i, "") : "";
     const webhookEvent = order ? repos.db.prepare(`
       SELECT id, event_type, result, is_test, created_at
       FROM webhook_events
-      WHERE project_id = ? AND (json_extract(payload_json, '$.data.id') = ? OR json_extract(payload_json, '$.data.transaction_id') = ?)
+      WHERE project_id = ? AND (
+        transaction_id = ? OR
+        transaction_id = ? OR
+        json_extract(payload_json, '$.data.id') = ? OR
+        json_extract(payload_json, '$.data.transaction_id') = ?
+      )
       ORDER BY id DESC LIMIT 1
-    `).get(project.id, order.transaction_id, order.transaction_id) as any : null;
+    `).get(project.id, order.transaction_id, baseOrderTxId, order.transaction_id, order.transaction_id) as any : null;
 
     res.json({
       job,

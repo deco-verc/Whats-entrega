@@ -531,6 +531,45 @@ describe("Spintax e Fila de Mensagens (dispatcher.ts)", () => {
 
     db.close();
   });
+
+  test("dispatchQueueJob deve resolver e persistir jid para cliente de projeto diferente de default", async () => {
+    const db = createDatabaseConnection(":memory:");
+    db.prepare("INSERT INTO projects (id, name, slug, is_active) VALUES ('proj_multi', 'Projeto Multi', 'multi', 1)").run();
+    const custRepo = new CustomerRepository(db);
+    const queueRepo = new MessageQueueRepository(db);
+    const auditRepo = new AuditLogRepository(db);
+
+    const customer = custRepo.upsert({
+      project_id: "proj_multi",
+      phone: "5511994445555",
+      name: "Cliente Multi",
+    });
+
+    const job = queueRepo.enqueue({
+      project_id: "proj_multi",
+      customer_id: customer.id,
+      phone: customer.phone,
+      message_type: "DELIVERY_MAIN",
+      content: "Entrega multi-projeto",
+      scheduled_at: new Date(),
+    });
+
+    const { sock, calls } = createMockWASocket();
+
+    const result = await dispatchQueueJob(job, sock, {
+      skipPresenceSimulation: true,
+      queueRepo,
+      customerRepo: custRepo,
+      auditRepo,
+    });
+
+    assert.equal(result.success, true);
+    assert.ok(calls.some((c) => c.method === "onWhatsApp"));
+    const updatedCustomer = custRepo.findByPhone("5511994445555", "proj_multi");
+    assert.equal(updatedCustomer?.jid, "5511994445555@s.whatsapp.net");
+
+    db.close();
+  });
 });
 
 describe("Extracao e Filtragem de Mensagens Inbound (socket.ts)", () => {
@@ -774,6 +813,31 @@ describe("Extracao e Filtragem de Mensagens Inbound (socket.ts)", () => {
     assert.equal(pairingCalls[0].args[0], "5511999998888");
     assert.equal(receivedCode, "PAIR-8888");
 
+    await mgr.disconnect();
+  });
+
+  test("WhatsAppSocketManager deve transicionar para DISCONNECTED ao exceder maxReconnectAttempts", async () => {
+    const mgr = new WhatsAppSocketManager();
+    const mockSocketObj = createMockWASocket({ registered: true });
+
+    await mgr.connect({
+      socketFactory: () => mockSocketObj.sock,
+      authStateLoader: async () => ({
+        state: mockSocketObj.sock.authState,
+        saveCreds: async () => {},
+      }),
+      autoReconnect: true,
+      maxReconnectAttempts: 0,
+    });
+
+    mockSocketObj.emitEvent("connection.update", {
+      connection: "close",
+      lastDisconnect: {
+        error: { output: { statusCode: 500 }, message: "Transient socket drop" },
+      },
+    });
+
+    assert.equal(mgr.getStatus(), "DISCONNECTED");
     await mgr.disconnect();
   });
 });

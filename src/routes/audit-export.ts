@@ -167,7 +167,7 @@ export function createAuditExportRouter(database: () => Database.Database = getD
   router.get("/kpis", (_req: Request, res: Response): void => {
     try {
       const db = database();
-      const totalOrdersRow = db.prepare("SELECT COUNT(*) as count FROM orders").get() as { count: number } | undefined;
+      const totalOrdersRow = db.prepare("SELECT COUNT(*) as count FROM orders WHERE is_test = 0").get() as { count: number } | undefined;
       const totalDeliveredRow = db.prepare("SELECT COUNT(*) as count FROM message_queue WHERE status = 'SENT'").get() as { count: number } | undefined;
       const totalPendingRow = db.prepare("SELECT COUNT(*) as count FROM message_queue WHERE status = 'PENDING'").get() as { count: number } | undefined;
       const activeProjectsRow = db.prepare("SELECT COUNT(*) as count FROM projects WHERE is_active = 1").get() as { count: number } | undefined;

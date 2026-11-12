@@ -31,12 +31,11 @@ const eventLabels = {
 };
 const statusLabels = {
   PENDING: "Agendada", PROCESSING: "Processando", SENT: "Enviada", DELIVERED: "Entregue", FAILED: "Falha de processamento",
-  CANCELLED: "Cancelada", PROCESSED: "Validado", DUPLICATE: "Duplicado", AUTH_FAILED: "Falha de autenticação",
+  CANCELLED: "Cancelada", PROCESSED: "Produção", DUPLICATE: "Duplicado", AUTH_FAILED: "Falha de autenticação",
   INVALID_PAYLOAD: "Payload inválido", PRODUCT_MISMATCH: "Produto incompatível", PROBE: "Teste de conectividade",
   PROCESSING_ERROR: "Erro de processamento", PAID: "Pago", APPROVED: "Aprovado", REFUSED: "Recusado",
   SIMULATED: "Simulação concluída", NO_MATCH: "Sem agendamento", TEST: "Teste Cakto",
-  PROCESSED: "Produção", AMBIGUOUS: "Ambíguo (Retido)", TEST_FAILED: "Falha de teste",
-  AUTH_FAILED: "Falha de autenticação", DUPLICATE: "Duplicado",
+  AMBIGUOUS: "Ambíguo (Retido)", TEST_FAILED: "Falha de teste",
 };
 
 const jobStatus = (job) => {
@@ -145,7 +144,7 @@ const field = (label, name, value = "", attrs = "") => `<label class="field">${h
 const textarea = (label, name, value = "", attrs = "") => `<label class="field">${h(label)}<textarea name="${name}" ${attrs}>${h(value)}</textarea></label>`;
 const select = (label, name, items, value, attrs = "") => `<label class="field">${h(label)}<select name="${name}" ${attrs}>${items.map(([key, text]) =>
   `<option value="${h(key)}"${String(key) === String(value) ? " selected" : ""}>${h(text)}</option>`).join("")}</select></label>`;
-const check = (label, name, checked = false) => `<label class="checkbox"><input type="checkbox" name="${name}"${checked ? " checked" : ""}> ${h(label)}</label>`;
+const check = (label, name, checked = false, attrs = "") => `<label class="checkbox"><input type="checkbox" name="${name}"${checked ? " checked" : ""}${attrs ? ` ${attrs}` : ""}> ${h(label)}</label>`;
 
 function renderShell(project, view) {
   const current = (match) => match ? ' aria-current="page"' : "";
@@ -735,7 +734,7 @@ function testDispatchDialog(project) {
         ];
       }), "Nenhum job agendado")}
       <div class="row" style="margin-top: 10px; justify-content: flex-end;">
-        <button type="button" class="button" onclick="document.querySelector('#dialog').close(); state.tab = 'queue'; render();">Acompanhar Fila de Envios</button>
+        <button type="button" class="button" data-action="go-queue">Acompanhar Fila de Envios</button>
       </div>
     `;
     notify("Disparo de teste registrado.");
@@ -1266,11 +1265,9 @@ function renderWaDialogMarkup() {
       </div>
     </div>
 
-    ${data?.last_disconnect_reason ? `
-      <div class="notice error" style="font-size: .82rem; margin-top: 6px;">
-        <strong>Último motivo:</strong> ${h(data.last_disconnect_reason)}
-      </div>
-    ` : ''}
+    <div id="wa-disconnect-reason" class="notice error" style="font-size: .82rem; margin-top: 6px;${data?.last_disconnect_reason ? "" : " display: none;"}">
+      ${data?.last_disconnect_reason ? `<strong>Último motivo:</strong> ${h(data.last_disconnect_reason)}` : ""}
+    </div>
 
     <div class="row" style="justify-content: flex-end; margin-top: 10px;">
       ${button("Encerrar sessão", "wa-logout", "danger")}
@@ -1301,16 +1298,28 @@ function refreshConnectionDialog() {
     bannerPill.textContent = statusLabel;
   }
 
+  const reasonBox = root.querySelector("#wa-disconnect-reason");
+  if (reasonBox) {
+    if (data?.last_disconnect_reason) {
+      reasonBox.innerHTML = `<strong>Último motivo:</strong> ${h(data.last_disconnect_reason)}`;
+      reasonBox.style.display = "";
+    } else {
+      reasonBox.innerHTML = "";
+      reasonBox.style.display = "none";
+    }
+  }
+
   const qrBox = root.querySelector("#wa-qr-container");
   if (qrBox) {
     if (data?.qr && state.lastQr !== data.qr) {
       state.lastQr = data.qr;
       qrBox.innerHTML = `<img class="wa-qr-img" id="wa-qr" src="/api/whatsapp/qr?t=${Date.now()}" alt="QR Code WhatsApp" />`;
-    } else if (!data?.qr && state.lastQr) {
+    } else if (!data?.qr && (state.lastQr || state.lastWaStatus !== statusKey)) {
       state.lastQr = null;
       qrBox.innerHTML = `<div class="wa-qr-loading"><span class="spinner"></span><p>${statusKey === 'CONNECTING' || statusKey === 'RECONNECTING' ? 'Gerando QR Code...' : 'QR Code não disponível.'}</p></div>`;
     }
   }
+  state.lastWaStatus = statusKey;
 
   const pairingArea = root.querySelector("#wa-pairing-display-area");
   const pairingVal = root.querySelector("#wa-pairing-code-val");
@@ -1347,6 +1356,7 @@ function bindWaDialogEvents() {
 
 function connectionDialog() {
   state.lastQr = null;
+  state.lastWaStatus = null;
   state.waActiveTab = state.waActiveTab || "qr";
   showDialog("Conexão WhatsApp", renderWaDialogMarkup());
   bindWaDialogEvents();
@@ -1469,6 +1479,7 @@ async function runAction(target) {
   const rule = state.data?.triggers?.find((item) => item.id === id);
   switch (action) {
     case "close-dialog": dialog.close(); break;
+    case "go-queue": dialog.close(); if (project) location.hash = projectPath(project, "queue"); break;
     case "refresh": await Promise.all([render(), updateConnection()]); break;
     case "create-project": projectDialog(); break;
     case "edit-project": if (selected) projectDialog(selected); break;

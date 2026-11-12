@@ -555,14 +555,14 @@ export class MessageQueueRepository {
     this.stmtFindDueJobs = db.prepare<[string, number]>(`
       SELECT * FROM message_queue
       WHERE status = 'PENDING' AND datetime(scheduled_at) <= datetime(?)
-        AND project_id IN (SELECT id FROM projects WHERE is_active = 1)
+        AND (is_test = 1 OR project_id IN (SELECT id FROM projects WHERE is_active = 1))
       ORDER BY datetime(scheduled_at) ASC, scheduled_at ASC
       LIMIT ?
     `);
     this.stmtFindNextDue = db.prepare<[string]>(`
       SELECT * FROM message_queue
       WHERE status = 'PENDING' AND datetime(scheduled_at) <= datetime(?)
-        AND project_id IN (SELECT id FROM projects WHERE is_active = 1)
+        AND (is_test = 1 OR project_id IN (SELECT id FROM projects WHERE is_active = 1))
       ORDER BY datetime(scheduled_at) ASC, scheduled_at ASC
       LIMIT 1
     `);
@@ -580,7 +580,7 @@ export class MessageQueueRepository {
           attempts = attempts + 1,
           updated_at = datetime('now')
       WHERE id = ? AND status = 'PENDING'
-        AND project_id IN (SELECT id FROM projects WHERE is_active = 1)
+        AND (is_test = 1 OR project_id IN (SELECT id FROM projects WHERE is_active = 1))
     `);
     this.stmtMarkSent = db.prepare<[string]>(`
       UPDATE message_queue
@@ -704,7 +704,7 @@ export class MessageQueueRepository {
     const refIso = normalizeIsoDate(referenceTime);
     if (projectId) {
       return this.db.prepare(
-        "SELECT * FROM message_queue WHERE status = 'PENDING' AND datetime(scheduled_at) <= datetime(?) AND project_id = ? ORDER BY datetime(scheduled_at) ASC, scheduled_at ASC LIMIT ?"
+        "SELECT * FROM message_queue WHERE status = 'PENDING' AND datetime(scheduled_at) <= datetime(?) AND project_id = ? AND (is_test = 1 OR project_id IN (SELECT id FROM projects WHERE is_active = 1)) ORDER BY datetime(scheduled_at) ASC, scheduled_at ASC LIMIT ?"
       ).all(refIso, projectId, Math.max(1, limit)) as QueueJob[];
     }
     return this.stmtFindDueJobs.all(refIso, Math.max(1, limit)) as QueueJob[];
@@ -714,7 +714,7 @@ export class MessageQueueRepository {
     const refIso = normalizeIsoDate(referenceTime);
     if (projectId) {
       const row = this.db.prepare(
-        "SELECT * FROM message_queue WHERE status = 'PENDING' AND datetime(scheduled_at) <= datetime(?) AND project_id = ? ORDER BY datetime(scheduled_at) ASC, scheduled_at ASC LIMIT 1"
+        "SELECT * FROM message_queue WHERE status = 'PENDING' AND datetime(scheduled_at) <= datetime(?) AND project_id = ? AND (is_test = 1 OR project_id IN (SELECT id FROM projects WHERE is_active = 1)) ORDER BY datetime(scheduled_at) ASC, scheduled_at ASC LIMIT 1"
       ).get(refIso, projectId) as QueueJob | undefined;
       return row ?? null;
     }

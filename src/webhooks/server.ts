@@ -103,7 +103,7 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
       const db = getDatabase();
       if (db && db.open) {
         const cRow = db.prepare("SELECT COUNT(*) as count FROM customers").get() as { count: number } | undefined;
-        const oRow = db.prepare("SELECT COUNT(*) as count FROM orders").get() as { count: number } | undefined;
+        const oRow = db.prepare("SELECT COUNT(*) as count FROM orders WHERE is_test = 0").get() as { count: number } | undefined;
         const pRow = db.prepare("SELECT COUNT(*) as count FROM message_queue WHERE status = 'PENDING'").get() as { count: number } | undefined;
         const sRow = db.prepare("SELECT COUNT(*) as count FROM message_queue WHERE status = 'SENT'").get() as { count: number } | undefined;
         customersCount = cRow?.count ?? 0;
@@ -467,7 +467,7 @@ export function createWebhookApp(options: WebhookServerOptions = {}): Applicatio
 
     const signature = req.get("X-Cakto-Signature");
     const timestamp = req.get("X-Cakto-Timestamp");
-    const secret = project.cakto_webhook_secret ?? (project.id === "default" ? options.secret ?? env.caktoWebhookSecret : "");
+    const secret = (project.cakto_webhook_secret || undefined) ?? (project.id === "default" ? options.secret ?? env.caktoWebhookSecret : "");
     const isSigned = Boolean(timestamp || signature?.startsWith("v1="));
     const providedSecret = signature || req.get("X-Cakto-Secret") || req.get("X-Webhook-Secret") ||
       req.get("Authorization")?.match(/^Bearer (.+)$/)?.[1] ||

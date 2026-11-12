@@ -462,10 +462,30 @@ export class WhatsAppSocketManager {
           const isConnectionReplaced = statusCode === 440;
 
           if (isLoggedOut) {
+            if (this.reconnectTimer) {
+              clearTimeout(this.reconnectTimer);
+              this.reconnectTimer = null;
+            }
+            if (this.pairingCodeTimer) {
+              clearTimeout(this.pairingCodeTimer);
+              this.pairingCodeTimer = null;
+            }
             this.qr = null;
             this.pairingCode = null;
             this.connectedPhone = null;
             this.cleanExistingSocket();
+            // Remove credenciais revogadas para permitir novo QR Code / pairing code imediato sem precisar chamar logout antes
+            if (!this.currentOptions.authStateLoader) {
+              try {
+                this.backupAuthDir(authDir);
+                if (fs.existsSync(authDir)) {
+                  fs.rmSync(authDir, { recursive: true, force: true });
+                  fs.mkdirSync(authDir, { recursive: true });
+                }
+              } catch (clearErr) {
+                console.warn("[WhatsApp] Falha ao limpar authInfoDir apos LOGGED_OUT:", clearErr);
+              }
+            }
             this.setStatus("LOGGED_OUT", boomError);
             return;
           }
@@ -479,8 +499,14 @@ export class WhatsAppSocketManager {
           if (isRestartRequired) {
             this.cleanExistingSocket();
             this.setStatus("RECONNECTING", boomError);
-            setTimeout(() => {
-              void this.connect(this.currentOptions);
+            if (this.reconnectTimer) {
+              clearTimeout(this.reconnectTimer);
+            }
+            this.reconnectTimer = setTimeout(() => {
+              this.reconnectTimer = null;
+              if (!this.isExplicitDisconnect) {
+                void this.connect(this.currentOptions);
+              }
             }, 500);
             return;
           }
@@ -599,6 +625,7 @@ export class WhatsAppSocketManager {
 
     if (this.reconnectAttempts > maxAttempts) {
       console.warn(`[WhatsApp] Limite maximo de tentativas (${maxAttempts}) atingido. Reconexao pausada.`);
+      this.setStatus("DISCONNECTED", new Error(`Limite maximo de tentativas (${maxAttempts}) atingido.`));
       return;
     }
 
@@ -631,11 +658,23 @@ export class WhatsAppSocketManager {
     }
 
     // Se o socket nao existir ou estiver desligado, inicia o socket
-    if (!this.sock || this.status === "IDLE" || this.status === "DISCONNECTED" || this.status === "LOGGED_OUT") {
+    const needsNewSocket =
+      !this.sock ||
+      this.status === "IDLE" ||
+      this.status === "DISCONNECTED" ||
+      this.status === "LOGGED_OUT" ||
+      this.status === "ERROR";
+
+    if (needsNewSocket) {
       await this.connect({
         ...this.currentOptions,
         pairingPhone: cleanPhone,
       });
+      // Aguarda breve handshake do WebSocket antes de solicitar o codigo de pareamento
+      const settleDelayMs = this.currentOptions.pairingCodeDelayMs ?? (this.currentOptions.socketFactory ? 0 : 1500);
+      if (settleDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, settleDelayMs));
+      }
     }
 
     if (!this.sock) {
